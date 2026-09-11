@@ -1,6 +1,9 @@
 package wsl
 
-import "unicode/utf16"
+import (
+	"unicode/utf16"
+	"unicode/utf8"
+)
 
 // decodeOutput converts raw bytes captured from wsl.exe's stdout/stderr into
 // a Go string.
@@ -13,6 +16,25 @@ import "unicode/utf16"
 // versa) produces mojibake or a garbled distribution list, which in turn
 // breaks state reconciliation, so this detection has to run before any
 // parsing.
+//
+// Detecting the no-BOM case needs two complementary signals, not one:
+//
+//   - looksLikeUTF16LE catches the common case this package actually
+//     parses -- ASCII-heavy text (distribution names, "Running"/"Stopped",
+//     digits) encoded as UTF-16LE, which shows a very characteristic
+//     pattern of alternating printable bytes and 0x00 bytes.
+//   - utf8.Valid(b) being false catches the opposite case: UTF-16LE text
+//     that is mostly non-ASCII (e.g. wsl.exe's --help output on a
+//     non-English Windows display language, verified against a real
+//     Korean-locale host during development). There, most byte pairs have
+//     a non-zero high byte, so looksLikeUTF16LE's ratio check alone
+//     under-detects it -- but that same byte pattern also happens to
+//     violate UTF-8's encoding rules, which utf8.Valid catches instead.
+//
+// Neither signal alone is reliable across both shapes of content (an
+// ASCII-heavy UTF-16LE stream trivially satisfies utf8.Valid, since every
+// individual byte -- printable ASCII or 0x00 -- is independently a valid
+// one-byte UTF-8 sequence), so both are checked.
 func decodeOutput(b []byte) string {
 	if len(b) == 0 {
 		return ""
@@ -23,12 +45,7 @@ func decodeOutput(b []byte) string {
 		return decodeUTF16LE(b[2:])
 	}
 
-	// No BOM: heuristically detect UTF-16LE. wsl.exe's output is
-	// overwhelmingly ASCII (distribution names, "Running"/"Stopped",
-	// digits), so plain ASCII encoded as UTF-16LE shows a very
-	// characteristic pattern: every even-indexed byte is a printable
-	// ASCII/whitespace byte and every odd-indexed byte is 0x00.
-	if len(b) >= 2 && looksLikeUTF16LE(b) {
+	if len(b) >= 2 && (looksLikeUTF16LE(b) || !utf8.Valid(b)) {
 		return decodeUTF16LE(b)
 	}
 

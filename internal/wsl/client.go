@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 )
 
 // Client is the abstraction internal/provider programs against. The only
@@ -27,9 +28,9 @@ type Client interface {
 	// (checkable with errors.Is) if no such distribution is registered.
 	Get(ctx context.Context, name string) (*Distribution, error)
 
-	// Create registers a new distribution, via `wsl --import` (Rootfs +
-	// Location set) or `wsl --install --distribution` (Distribution set);
-	// see CreateOptions.
+	// Create registers a new distribution, via `wsl --install <Distribution>`
+	// (Distribution set) or `wsl --import` (Rootfs + Location set); see
+	// CreateOptions.
 	Create(ctx context.Context, opts CreateOptions) error
 
 	// SetVersion switches an existing distribution between WSL 1 and
@@ -44,6 +45,15 @@ type Client interface {
 
 type client struct {
 	runner Runner
+
+	// mu serializes every state-mutating wsl.exe invocation (Create,
+	// SetVersion, Delete). Terraform runs multiple resources' CRUD
+	// concurrently (parallelism defaults to 10), and WSL's distribution
+	// registration internals (the Lxss registry hive, the per-distribution
+	// VHD) are not documented as safe for concurrent registration/
+	// unregistration, so this provider does not assume they are. List/Get
+	// are read-only and are not serialized by this lock.
+	mu sync.Mutex
 }
 
 // NewClient returns a Client that drives wsl.exe through runner.
@@ -54,20 +64,24 @@ func NewClient(runner Runner) Client {
 func (c *client) List(ctx context.Context) ([]Distribution, error) {
 	result, err := c.runner.Run(ctx, "--list", "--verbose")
 	if err != nil {
-		// wsl.exe exits non-zero, with a localized message, when zero
-		// distributions are registered at all -- there is currently no
-		// machine-readable way to distinguish that from a real failure
-		// (see https://github.com/microsoft/WSL/issues/6235, and
-		// docs/design-decisions/locale-independent-parsing.md). Best
-		// effort: if stdout still parses into zero rows, treat it as an
-		// empty list; otherwise this is a genuine failure (wsl.exe
-		// missing, WSL not installed, etc.) and is surfaced to the caller
-		// with the captured output attached.
+		// wsl.exe exits non-zero, with a localized message *printed to
+		// stdout*, when zero distributions are registered at all -- there
+		// is currently no machine-readable way to distinguish that from a
+		// real failure (see https://github.com/microsoft/WSL/issues/6235,
+		// and docs/design-decisions/locale-independent-parsing.md). Best
+		// effort: if stdout is non-empty but still parses into zero rows,
+		// treat it as that known case. The len(result.Stdout) > 0 guard
+		// matters: a *failure to even run* wsl.exe (missing executable,
+		// context canceled) also parses its empty Stdout into zero rows,
+		// and must not be masked the same way -- that previously caused
+		// every wsl_distribution resource to look deleted (ErrNotFound)
+		// and be silently dropped from state on the next Read whenever
+		// wsl.exe could not be run at all.
 		dists, parseErr := ParseListVerbose(result.Stdout)
-		if parseErr == nil && len(dists) == 0 {
+		if parseErr == nil && len(dists) == 0 && len(result.Stdout) > 0 {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("wsl: list distributions: %w (stderr: %s)", err, decodeOutput(result.Stderr))
+		return nil, fmt.Errorf("wsl: list distributions: %w %s", err, describeOutput(result))
 	}
 
 	return ParseListVerbose(result.Stdout)
@@ -87,6 +101,9 @@ func (c *client) Get(ctx context.Context, name string) (*Distribution, error) {
 }
 
 func (c *client) Create(ctx context.Context, opts CreateOptions) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if opts.Name == "" {
 		return errors.New("wsl: create: name is required")
 	}
@@ -96,14 +113,66 @@ func (c *client) Create(ctx context.Context, opts CreateOptions) error {
 
 	switch {
 	case importMode && installMode:
-		return errors.New("wsl: create: rootfs/location and distribution are mutually exclusive; set exactly one creation mode")
-	case importMode:
-		return c.createImport(ctx, opts)
+		return errors.New("wsl: create: distribution and rootfs/location are mutually exclusive; set exactly one creation mode")
 	case installMode:
 		return c.createInstall(ctx, opts)
+	case importMode:
+		return c.createImport(ctx, opts)
 	default:
-		return errors.New("wsl: create: either rootfs+location (import mode) or distribution (install mode) is required")
+		return errors.New("wsl: create: either distribution (install mode) or rootfs+location (import mode) is required")
 	}
+}
+
+func (c *client) createInstall(ctx context.Context, opts CreateOptions) error {
+	// `wsl --install` takes the distribution positionally
+	// (`wsl --install <Distro> [Options...]`), not as a --distribution
+	// flag -- confirmed against a real install
+	// (`wsl --install ArchLinux --name <custom> --no-launch`, which
+	// registers under <custom>). --name is a genuine, working --install
+	// option on current wsl.exe (also confirmed against a real install);
+	// earlier research suggesting it was rejected for "legacy" Store
+	// distributions turned out to be outdated. See
+	// docs/design-decisions/creation-model.md.
+	args := []string{"--install", opts.Distribution, "--no-launch"}
+	if opts.Name != opts.Distribution {
+		args = append(args, "--name", opts.Name)
+	}
+
+	result, err := c.runner.Run(ctx, args...)
+	if err != nil {
+		return fmt.Errorf("wsl: install %q: %w %s", opts.Distribution, err, describeOutput(result))
+	}
+
+	// Unlike `wsl --import`, `wsl --install` has no per-invocation
+	// --version flag: the new distribution gets whatever version
+	// `wsl --set-default-version` currently points at. Apply the
+	// requested version explicitly rather than leaving it to that
+	// host-wide, mutable default. Call the unexported setVersion, not the
+	// public SetVersion: c.mu is already held by Create, and sync.Mutex is
+	// not reentrant.
+	if opts.Version != 0 {
+		if err := c.setVersion(ctx, opts.Name, opts.Version); err != nil {
+			// The distribution now exists on the host but not at the
+			// requested version, and Create is about to return an error
+			// -- so the caller (internal/provider) will not save any
+			// state for it. Left alone, that's an orphan: invisible to
+			// Terraform, but "already exists" on the next apply's
+			// `wsl --install`. Roll back by unregistering it, so Create
+			// stays all-or-nothing instead of leaving a partial result
+			// only discoverable via `wsl --list --verbose` by hand.
+			if unregErr := c.unregister(ctx, opts.Name); unregErr != nil {
+				return fmt.Errorf(
+					"wsl: install %q: applying requested version: %w; additionally, rolling back the "+
+						"otherwise-orphaned distribution failed: %w (you will need to run "+
+						"`wsl --unregister %s` yourself)",
+					opts.Distribution, err, unregErr, opts.Name,
+				)
+			}
+			return fmt.Errorf("wsl: install %q: applying requested version: %w (rolled back: unregistered %q)",
+				opts.Distribution, err, opts.Name)
+		}
+	}
+	return nil
 }
 
 func (c *client) createImport(ctx context.Context, opts CreateOptions) error {
@@ -121,59 +190,35 @@ func (c *client) createImport(ctx context.Context, opts CreateOptions) error {
 
 	result, err := c.runner.Run(ctx, args...)
 	if err != nil {
-		return fmt.Errorf("wsl: import %q: %w (stderr: %s)", opts.Name, err, decodeOutput(result.Stderr))
-	}
-	return nil
-}
-
-func (c *client) createInstall(ctx context.Context, opts CreateOptions) error {
-	// wsl.exe does not support --name when installing a legacy Store
-	// distribution (confirmed during research; see
-	// docs/design-decisions/creation-model.md), so the registration name
-	// is always exactly the Store distribution identifier. Enforcing this
-	// here, with a clear error, is better than silently registering the
-	// distribution under a different name than the resource's `name`
-	// attribute claims.
-	if opts.Name != opts.Distribution {
-		return fmt.Errorf(
-			"wsl: create: install mode registers the distribution under its Store identifier %q, "+
-				"which does not match name %q; wsl.exe does not support installing a Store distribution "+
-				"under a custom name, so name must equal distribution in install mode",
-			opts.Distribution, opts.Name,
-		)
-	}
-
-	result, err := c.runner.Run(ctx, "--install", "--distribution", opts.Distribution, "--no-launch")
-	if err != nil {
-		return fmt.Errorf("wsl: install %q: %w (stderr: %s)", opts.Distribution, err, decodeOutput(result.Stderr))
-	}
-
-	// Unlike `wsl --import`, `wsl --install` has no per-invocation
-	// --version flag: the new distribution gets whatever version
-	// `wsl --set-default-version` currently points at. Apply the
-	// requested version explicitly rather than leaving it to that
-	// host-wide, mutable default.
-	if opts.Version != 0 {
-		if err := c.SetVersion(ctx, opts.Name, opts.Version); err != nil {
-			return fmt.Errorf("wsl: install %q: applying requested version: %w", opts.Distribution, err)
-		}
+		return fmt.Errorf("wsl: import %q: %w %s", opts.Name, err, describeOutput(result))
 	}
 	return nil
 }
 
 func (c *client) SetVersion(ctx context.Context, name string, version int) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.setVersion(ctx, name, version)
+}
+
+// setVersion is SetVersion without locking c.mu, for use by callers (like
+// createInstall) that already hold it.
+func (c *client) setVersion(ctx context.Context, name string, version int) error {
 	if version != 1 && version != 2 {
 		return fmt.Errorf("wsl: set-version: version must be 1 or 2, got %d", version)
 	}
 
 	result, err := c.runner.Run(ctx, "--set-version", name, strconv.Itoa(version))
 	if err != nil {
-		return fmt.Errorf("wsl: set-version %q to %d: %w (stderr: %s)", name, version, err, decodeOutput(result.Stderr))
+		return fmt.Errorf("wsl: set-version %q to %d: %w %s", name, version, err, describeOutput(result))
 	}
 	return nil
 }
 
 func (c *client) Delete(ctx context.Context, name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	// Check existence ourselves first, rather than inferring success from
 	// wsl.exe's (locale-dependent) message text, so Delete stays
 	// idempotent without any text matching.
@@ -185,9 +230,36 @@ func (c *client) Delete(ctx context.Context, name string) error {
 		return err
 	}
 
+	return c.unregister(ctx, name)
+}
+
+// unregister runs `wsl --unregister name` without locking c.mu, for use by
+// callers (Delete, createInstall's rollback) that already hold it.
+func (c *client) unregister(ctx context.Context, name string) error {
 	result, err := c.runner.Run(ctx, "--unregister", name)
 	if err != nil {
-		return fmt.Errorf("wsl: unregister %q: %w (stderr: %s)", name, err, decodeOutput(result.Stderr))
+		return fmt.Errorf("wsl: unregister %q: %w %s", name, err, describeOutput(result))
 	}
 	return nil
+}
+
+// describeOutput formats a command's captured output for an error message.
+// wsl.exe is a Windows console application and does not reliably follow
+// the Unix convention of writing error text to stderr specifically --
+// several real failures (a duplicate distribution name, a bad argument)
+// have been observed to print to stdout instead -- so error messages
+// include whichever of stdout/stderr is non-empty rather than only stderr.
+func describeOutput(result Result) string {
+	stderr := decodeOutput(result.Stderr)
+	stdout := decodeOutput(result.Stdout)
+	switch {
+	case stderr != "" && stdout != "":
+		return fmt.Sprintf("(stderr: %s, stdout: %s)", stderr, stdout)
+	case stderr != "":
+		return fmt.Sprintf("(stderr: %s)", stderr)
+	case stdout != "":
+		return fmt.Sprintf("(stdout: %s)", stdout)
+	default:
+		return "(no output captured)"
+	}
 }

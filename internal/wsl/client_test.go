@@ -3,6 +3,7 @@ package wsl
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -66,6 +67,29 @@ func TestClient_List_Empty(t *testing.T) {
 	}
 }
 
+// TestClient_List_ExecutableNotFound guards a real bug: a failure to run
+// wsl.exe at all (here simulated the same way ProcessRunner reports it --
+// an error with empty Stdout/Stderr) was previously indistinguishable from
+// the "zero distributions registered" case above, since both parse an
+// empty/non-table Stdout into zero rows. List must surface this as an
+// error, not silently return an empty list -- otherwise Get/Read treat
+// every distribution as deleted (ErrNotFound) whenever wsl.exe cannot be
+// run at all, e.g. a misconfigured `executable` provider argument.
+func TestClient_List_ExecutableNotFound(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		return Result{}, fmt.Errorf("%w: wsl.exe: not found", ErrExecutableNotFound)
+	}}
+	c := NewClient(runner)
+
+	dists, err := c.List(context.Background())
+	if err == nil {
+		t.Fatalf("got nil error and %d distributions, want an error", len(dists))
+	}
+	if !errors.Is(err, ErrExecutableNotFound) {
+		t.Errorf("err = %v, want it to wrap ErrExecutableNotFound", err)
+	}
+}
+
 func TestClient_Get_Found(t *testing.T) {
 	runner := &fakeRunner{fn: func(args []string) (Result, error) {
 		return Result{Stdout: []byte(sampleList)}, nil
@@ -93,7 +117,7 @@ func TestClient_Get_NotFound(t *testing.T) {
 	}
 }
 
-func TestClient_Create(t *testing.T) {
+func TestClient_Create_ImportMode(t *testing.T) {
 	runner := &fakeRunner{fn: func(args []string) (Result, error) {
 		return Result{}, nil
 	}}
@@ -121,7 +145,7 @@ func TestClient_Create(t *testing.T) {
 	}
 }
 
-func TestClient_Create_NoVersionOmitsFlag(t *testing.T) {
+func TestClient_Create_ImportMode_NoVersionOmitsFlag(t *testing.T) {
 	runner := &fakeRunner{fn: func(args []string) (Result, error) { return Result{}, nil }}
 	c := NewClient(runner)
 
@@ -162,7 +186,7 @@ func TestClient_Create_InstallMode(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	want := []string{"--install", "--distribution", "Ubuntu-24.04", "--no-launch"}
+	want := []string{"--install", "Ubuntu-24.04", "--no-launch"}
 	got := runner.calls[0]
 	if len(got) != len(want) {
 		t.Fatalf("args = %v, want %v", got, want)
@@ -195,15 +219,65 @@ func TestClient_Create_InstallMode_AppliesRequestedVersion(t *testing.T) {
 	}
 }
 
-func TestClient_Create_InstallMode_RejectsNameMismatch(t *testing.T) {
-	c := NewClient(&fakeRunner{})
+// TestClient_Create_InstallMode_RollsBackOnSetVersionFailure guards the
+// partial-failure case: `wsl --install` succeeds but the follow-up
+// `wsl --set-version` fails. Without a rollback, the distribution would
+// exist on the host but Create still returns an error, so
+// internal/provider never saves state for it -- an orphan, invisible to
+// Terraform, that makes the next `wsl --install` of the same name fail
+// with "already exists". Create must instead unregister it so it stays
+// all-or-nothing.
+func TestClient_Create_InstallMode_RollsBackOnSetVersionFailure(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		if len(args) > 0 && args[0] == "--set-version" {
+			return Result{}, errors.New("set-version failed")
+		}
+		return Result{}, nil
+	}}
+	c := NewClient(runner)
+
+	err := c.Create(context.Background(), CreateOptions{Name: "Ubuntu-24.04", Distribution: "Ubuntu-24.04", Version: 1})
+	if err == nil {
+		t.Fatal("expected an error when set-version fails")
+	}
+	if !strings.Contains(err.Error(), "rolled back") {
+		t.Errorf("err = %v, want it to mention the rollback", err)
+	}
+
+	found := false
+	for _, call := range runner.calls {
+		if len(call) >= 2 && call[0] == "--unregister" && call[1] == "Ubuntu-24.04" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected --unregister to roll back the orphaned distribution, calls: %+v", runner.calls)
+	}
+}
+
+// TestClient_Create_InstallMode_PassesNameWhenDifferent covers passing a
+// custom registration name in install mode: --name is included whenever it
+// differs from --distribution. Confirmed working against a real install
+// (`wsl --install ArchLinux --name <custom> --no-launch`); see
+// docs/design-decisions/creation-model.md.
+func TestClient_Create_InstallMode_PassesNameWhenDifferent(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) { return Result{}, nil }}
+	c := NewClient(runner)
 
 	err := c.Create(context.Background(), CreateOptions{Name: "worker", Distribution: "Ubuntu-24.04"})
-	if err == nil {
-		t.Fatal("expected an error when name does not match distribution in install mode")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "does not support installing a Store distribution under a custom name") {
-		t.Errorf("error = %v, want it to explain the wsl.exe --name limitation", err)
+
+	want := []string{"--install", "Ubuntu-24.04", "--no-launch", "--name", "worker"}
+	got := runner.calls[0]
+	if len(got) != len(want) {
+		t.Fatalf("args = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("arg[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 

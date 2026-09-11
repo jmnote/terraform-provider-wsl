@@ -41,3 +41,7 @@ dist/
 .terraform.lock.hcl
 crash.log
 crash.*.log
+
+# Claude Code runtime state (also excluded locally via .git/info/exclude,
+# but listed here too so it's ignored for anyone who clones this repo)
+.claude/

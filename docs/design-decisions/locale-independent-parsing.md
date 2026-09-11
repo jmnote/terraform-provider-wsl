@@ -1,8 +1,6 @@
 # Parse `wsl --list --verbose` Without Depending on Localized Text
 
 **Summary:** `internal/wsl/parser.go` splits columns on runs of two or more spaces and anchors on the always-ASCII VERSION column, so it never depends on the header text or the STATE column's values, both of which are localized on non-English Windows.
-**Created**: 2026-09-12
-**Author**: [@jmnote](https://github.com/jmnote)
 
 ---
 

@@ -32,17 +32,18 @@ type distributionResource struct {
 	client wsl.Client
 }
 
-// distributionResourceModel mirrors the wsl_distribution schema. rootfs and
-// location are pointers to *the source used at creation time*, not
-// necessarily the distribution's current on-disk state -- WSL does not
-// expose an API to read either back, so after `terraform import` they
-// remain null in state until the practitioner's configuration re-populates
-// them (see requiresReplaceUnlessImporting in planmodifiers.go).
+// distributionResourceModel mirrors the wsl_distribution schema.
+// Distribution, rootfs, and location are pointers to *the source used at
+// creation time*, not necessarily the distribution's current on-disk state
+// -- WSL does not expose an API to read any of them back, so after
+// `terraform import` they remain null in state until the practitioner's
+// configuration re-populates them (see requiresReplaceUnlessImporting in
+// planmodifiers.go).
 type distributionResourceModel struct {
 	Name         types.String `tfsdk:"name"`
+	Distribution types.String `tfsdk:"distribution"`
 	Rootfs       types.String `tfsdk:"rootfs"`
 	Location     types.String `tfsdk:"location"`
-	Distribution types.String `tfsdk:"distribution"`
 	Version      types.Int64  `tfsdk:"version"`
 	State        types.String `tfsdk:"state"`
 }
@@ -55,24 +56,42 @@ func (r *distributionResource) Schema(_ context.Context, _ resource.SchemaReques
 	resp.Schema = schema.Schema{
 		Description: "Manages a WSL distribution's registration lifecycle, an in-place WSL-version update, " +
 			"and delete via `wsl --unregister`. It does not manage anything inside the distribution. " +
-			"Creation supports two mutually exclusive modes: bring your own root filesystem tar via " +
-			"`rootfs`+`location` (`wsl --import`), or install a Microsoft Store distribution with no tar " +
-			"file at all via `distribution` (`wsl --install --distribution`) -- the same primitive everyday, " +
-			"interactive `wsl --install <Distribution>` uses. See docs/design-decisions/creation-model.md " +
-			"for why both exist and the constraints of each.\n\n" +
-			"~> **Destructive delete.** `terraform destroy`, or any change to `name`, `rootfs`, `location`, " +
-			"or `distribution`, unregisters the distribution via `wsl --unregister`, which permanently " +
+			"Creation supports two mutually exclusive modes: install a Microsoft Store distribution with " +
+			"no tar file at all via `distribution` (`wsl --install`) -- the same primitive everyday, " +
+			"interactive `wsl --install <Distribution>` uses -- or bring your own root filesystem tar via " +
+			"`rootfs`+`location` (`wsl --import`). See docs/design-decisions/creation-model.md for why " +
+			"both exist and the constraints of each.\n\n" +
+			"~> **Destructive delete.** `terraform destroy`, or any change to `name`, `distribution`, " +
+			"`rootfs`, or `location`, unregisters the distribution via `wsl --unregister`, which permanently " +
 			"deletes its virtual disk and all data inside it. There is no undo and this provider does not " +
 			"take backups.",
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
-				Required: true,
-				Description: "The distribution's registration name, e.g. \"worker\". This is also the " +
+				Optional: true,
+				Computed: true,
+				Description: "The distribution's registration name, e.g. \"Ubuntu-24.04\". This is also the " +
 					"identity used by `terraform import`. Changing it requires replacing the resource: WSL " +
-					"has no rename operation. In install mode this must equal `distribution`: wsl.exe does " +
-					"not support installing a Store distribution under a custom name.",
+					"has no rename operation. Required in import mode. Optional in install mode, where " +
+					"omitting it defaults to `distribution` (wsl.exe's own default when `--name` is not " +
+					"passed to `wsl --install`); set it explicitly there to register the distribution under " +
+					"a different name than its Store identifier.",
 				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"distribution": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				Description: "Install mode: a Microsoft Store distribution identifier (e.g. " +
+					"\"Ubuntu-24.04\"), installed via `wsl --install` with no tar file needed and no other " +
+					"registered distribution touched. Required in install mode; mutually exclusive with " +
+					"`rootfs`/`location`. Run `wsl --list --online` to see valid values. A bare flavor name " +
+					"(e.g. \"Ubuntu\") floats to whatever that flavor's catalog entry currently marks as " +
+					"default and can resolve to different content over time as Microsoft updates the " +
+					"catalog; a specific name (e.g. \"Ubuntu-24.04\") pins to that entry.",
+				PlanModifiers: []planmodifier.String{
+					requiresReplaceUnlessImporting(),
 				},
 			},
 			"rootfs": schema.StringAttribute{
@@ -95,18 +114,6 @@ func (r *distributionResource) Schema(_ context.Context, _ resource.SchemaReques
 					"exclusive with `distribution`. Like `rootfs`, WSL exposes no way to read this back for " +
 					"an existing distribution, so after `terraform import` this remains unset in state until " +
 					"your configuration supplies it.",
-				PlanModifiers: []planmodifier.String{
-					requiresReplaceUnlessImporting(),
-				},
-			},
-			"distribution": schema.StringAttribute{
-				Optional: true,
-				Computed: true,
-				Description: "Install mode: a Microsoft Store distribution identifier (e.g. " +
-					"\"Ubuntu-24.04\"), installed via `wsl --install --distribution` with no tar file needed " +
-					"and no other registered distribution touched. Mutually exclusive with `rootfs`/" +
-					"`location`. Must equal `name`, since wsl.exe registers it under the Store distribution's " +
-					"own name.",
 				PlanModifiers: []planmodifier.String{
 					requiresReplaceUnlessImporting(),
 				},
@@ -145,11 +152,11 @@ func (r *distributionResource) Configure(_ context.Context, req resource.Configu
 }
 
 // ValidateConfig catches an invalid creation-mode combination (both modes,
-// neither mode, or an incomplete import-mode pair) and an install-mode
-// name/distribution mismatch at `terraform plan`/`validate` time, rather
-// than only surfacing them as an apply-time error from the wsl.Client
-// (which still enforces the same rules as a backstop; see
-// internal/wsl/client.go).
+// neither mode, or an incomplete import-mode pair) and a missing `name` in
+// import mode (where, unlike install mode, there is no default to fall
+// back to) at `terraform plan`/`validate` time, rather than only surfacing
+// them as an apply-time error from the wsl.Client (which still enforces
+// the mode-exclusivity rule as a backstop; see internal/wsl/client.go).
 func (r *distributionResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var config distributionResourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
@@ -157,16 +164,29 @@ func (r *distributionResource) ValidateConfig(ctx context.Context, req resource.
 		return
 	}
 
+	// Defer to apply time whenever any of these reference something not
+	// yet known (e.g. `distribution = some_resource.x.output`), rather
+	// than treating Unknown the same as "not set": isKnownNonEmpty would
+	// otherwise report every one of them as absent, and a perfectly valid
+	// config -- e.g. install mode with a `distribution` value that only
+	// becomes known once another resource is created -- would fail
+	// `terraform plan`/`validate` with a false "missing creation mode"
+	// error before that resource has even run.
+	if config.Distribution.IsUnknown() || config.Rootfs.IsUnknown() ||
+		config.Location.IsUnknown() || config.Name.IsUnknown() {
+		return
+	}
+
+	hasDistribution := isKnownNonEmpty(config.Distribution)
 	hasRootfs := isKnownNonEmpty(config.Rootfs)
 	hasLocation := isKnownNonEmpty(config.Location)
-	hasDistribution := isKnownNonEmpty(config.Distribution)
 
 	switch {
 	case hasDistribution && (hasRootfs || hasLocation):
 		resp.Diagnostics.AddError(
 			"Conflicting creation mode",
 			"distribution is mutually exclusive with rootfs/location: set exactly one creation mode "+
-				"(import via rootfs+location, or install via distribution).",
+				"(install via distribution, or import via rootfs+location).",
 		)
 	case hasRootfs != hasLocation:
 		resp.Diagnostics.AddError(
@@ -176,16 +196,18 @@ func (r *distributionResource) ValidateConfig(ctx context.Context, req resource.
 	case !hasDistribution && !hasRootfs && !hasLocation:
 		resp.Diagnostics.AddError(
 			"Missing creation mode",
-			"either rootfs+location (import mode) or distribution (install mode) must be set.",
+			"either distribution (install mode) or rootfs+location (import mode) must be set.",
 		)
 	}
 
-	if hasDistribution && isKnownNonEmpty(config.Name) && config.Name.ValueString() != config.Distribution.ValueString() {
+	// name has no sensible default in import mode (unlike install mode,
+	// where an omitted name defaults to distribution), so it must be set
+	// explicitly there.
+	if (hasRootfs || hasLocation) && !isKnownNonEmpty(config.Name) {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("name"),
-			"name must equal distribution in install mode",
-			"wsl.exe does not support installing a Store distribution under a custom name, so name must "+
-				"equal distribution when using install mode.",
+			"Missing required value",
+			"name must be set in import mode; it has no default the way it does in install mode.",
 		)
 	}
 }
@@ -203,9 +225,17 @@ func (r *distributionResource) Create(ctx context.Context, req resource.CreateRe
 
 	opts := wsl.CreateOptions{
 		Name:         plan.Name.ValueString(),
+		Distribution: plan.Distribution.ValueString(),
 		Rootfs:       plan.Rootfs.ValueString(),
 		Location:     plan.Location.ValueString(),
-		Distribution: plan.Distribution.ValueString(),
+	}
+	// In install mode, an omitted name defaults to distribution, matching
+	// wsl.exe's own default when --name is not passed to `wsl --install`
+	// (confirmed against a real install; see
+	// docs/design-decisions/creation-model.md). ValidateConfig already
+	// guarantees name is set in import mode.
+	if isKnownNonEmpty(plan.Distribution) && !isKnownNonEmpty(plan.Name) {
+		opts.Name = plan.Distribution.ValueString()
 	}
 	if !plan.Version.IsUnknown() && !plan.Version.IsNull() {
 		opts.Version = int(plan.Version.ValueInt64())
@@ -214,6 +244,24 @@ func (r *distributionResource) Create(ctx context.Context, req resource.CreateRe
 	if err := r.client.Create(ctx, opts); err != nil {
 		resp.Diagnostics.AddError("Error creating WSL distribution", err.Error())
 		return
+	}
+
+	// Resolve every Computed attribute to a known value before continuing:
+	// Terraform requires all of them to be known after apply, and refresh
+	// (below) needs a concrete name to look the distribution up by. name
+	// is always resolved (to opts.Name, which is never empty by this
+	// point); distribution/rootfs/location default to null wherever the
+	// chosen creation mode left them unset -- there is no value to report
+	// for them, but Unknown is not a valid final state.
+	plan.Name = types.StringValue(opts.Name)
+	if plan.Distribution.IsUnknown() {
+		plan.Distribution = types.StringNull()
+	}
+	if plan.Rootfs.IsUnknown() {
+		plan.Rootfs = types.StringNull()
+	}
+	if plan.Location.IsUnknown() {
+		plan.Location = types.StringNull()
 	}
 
 	resp.Diagnostics.Append(r.refresh(ctx, &plan)...)
@@ -247,8 +295,9 @@ func (r *distributionResource) Read(ctx context.Context, req resource.ReadReques
 
 	state.Version = types.Int64Value(int64(dist.Version))
 	state.State = types.StringValue(dist.State)
-	// rootfs/location are intentionally left as whatever is already in
-	// state: WSL cannot report them back, so Read must not guess at them.
+	// distribution/rootfs/location are intentionally left as whatever is
+	// already in state: WSL cannot report them back, so Read must not
+	// guess at them.
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -290,9 +339,9 @@ func (r *distributionResource) Delete(ctx context.Context, req resource.DeleteRe
 
 func (r *distributionResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// The distribution's registration name is the entire import identity;
-	// see docs/design-decisions/resource-identity.md. rootfs/location
-	// are left null by this and populated by the practitioner's
-	// configuration; see requiresReplaceUnlessImporting.
+	// see docs/design-decisions/resource-identity.md.
+	// distribution/rootfs/location are left null by this and populated by
+	// the practitioner's configuration; see requiresReplaceUnlessImporting.
 	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }
 

@@ -1,8 +1,6 @@
 # Target Terraform Running Natively on Windows Only
 
 **Summary:** v0.1.0 supports Terraform running on `windows_amd64`/`windows_arm64` and shelling out to `wsl.exe` directly; running Terraform inside a WSL distribution and calling `/mnt/c/Windows/System32/wsl.exe` across the interop boundary is out of scope.
-**Created**: 2026-09-12
-**Author**: [@jmnote](https://github.com/jmnote)
 
 ---
 
@@ -28,8 +26,8 @@ terraform.exe
             +-- wsl.exe
                     |
                     +-- Ubuntu
-                    +-- worker1
-                    +-- worker2
+                    +-- debian1
+                    +-- debian2
 ```
 
 Running Terraform inside a WSL distribution and calling

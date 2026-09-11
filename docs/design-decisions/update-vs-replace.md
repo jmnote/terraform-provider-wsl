@@ -1,8 +1,6 @@
 # Only WSL Version Supports an In-Place Update
 
 **Summary:** Every `wsl_distribution` attribute requires replacing the resource except `version`, which updates in place via `wsl --set-version`, matching what Microsoft documents as a supported (if slow) conversion between WSL 1 and 2.
-**Created**: 2026-09-12
-**Author**: [@jmnote](https://github.com/jmnote)
 
 ---
 
@@ -18,13 +16,13 @@ has to follow real WSL semantics, not be assumed for convenience.
 | Attribute      | Behavior          | Why                                                                                                                |
 | -------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `name`         | `RequiresReplace` | WSL has no rename primitive.                                                                                      |
+| `distribution` | `RequiresReplace` | Only consulted at `--install` time; changing it means installing a different Store distribution.                 |
 | `rootfs`       | `RequiresReplace` | Only consulted at `--import` time; changing it means importing a different distribution.                         |
 | `location`     | `RequiresReplace` | WSL has no "move" primitive; relocating means re-importing elsewhere.                                             |
-| `distribution` | `RequiresReplace` | Only consulted at `--install` time; changing it means installing a different Store distribution.                 |
 | `version`      | in-place Update   | `wsl --set-version <name> <1\|2>` is Microsoft's documented, supported (if slow) conversion between WSL 1 and 2. |
 | `state`        | Computed only     | Purely observational; not settable through this resource.                                                        |
 
-`rootfs`/`location`/`distribution` use a custom plan modifier
+`distribution`/`rootfs`/`location` use a custom plan modifier
 (`requiresReplaceUnlessImporting`, see
 [Never Guess Creation-Time Attributes That WSL Cannot Report Back](observable-state.md))
 rather than the framework's plain `RequiresReplace`, so that adopting a

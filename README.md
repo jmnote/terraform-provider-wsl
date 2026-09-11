@@ -13,29 +13,28 @@ terraform {
   }
 }
 
-resource "wsl_distribution" "worker" {
-  name     = "worker"
-  rootfs   = "C:\\images\\ubuntu-24.04.tar"
-  location = "D:\\WSL\\worker"
-  version  = 2
+resource "wsl_distribution" "ubuntu" {
+  distribution = "Ubuntu-24.04" # name defaults to this
 }
 
-# ...or install a Microsoft Store distribution directly, no tar needed:
-resource "wsl_distribution" "ubuntu" {
-  name         = "Ubuntu-24.04"
-  distribution = "Ubuntu-24.04"
+# ...or bring your own root filesystem tar instead, no Store/network needed:
+resource "wsl_distribution" "debian1" {
+  name     = "debian1"
+  rootfs   = "C:\\images\\debian-12.tar"
+  location = "D:\\WSL\\debian1"
+  version  = 2
 }
 ```
 
 ## Scope
 
 This provider manages the **lifecycle of a WSL distribution's
-registration**: create (either by importing your own root filesystem tar,
-or by installing a Microsoft Store distribution with no tar file at all),
+registration**: create (either by installing a Microsoft Store distribution
+with no tar file at all, or by importing your own root filesystem tar),
 read, an in-place WSL-version update, delete, and import. It does **not**
 manage anything inside a distribution:
 
-- apt/dnf/apk package management
+- apt/dnf/zypper package management
 - arbitrary command execution
 - file management
 - systemd service management
@@ -76,10 +75,21 @@ terraform {
 ```hcl
 provider "wsl" {}
 
-resource "wsl_distribution" "worker" {
-  name     = "worker"
-  rootfs   = "C:\\images\\ubuntu-24.04.tar"
-  location = "D:\\WSL\\worker"
+resource "wsl_distribution" "ubuntu" {
+  distribution = "Ubuntu-24.04" # name defaults to this
+}
+
+# Custom name in install mode: multiple instances of the same Store
+# distribution, each under its own name.
+resource "wsl_distribution" "debian1" {
+  name         = "debian1"
+  distribution = "Debian"
+}
+
+resource "wsl_distribution" "debian3" {
+  name     = "debian3"
+  rootfs   = "C:\\images\\debian-12.tar" # a plain tar, or a .wsl file
+  location = "D:\\WSL\\debian3"
   version  = 2
 }
 
@@ -88,7 +98,7 @@ data "wsl_distribution" "ubuntu" {
 }
 ```
 
-`rootfs`+`location` (import mode) and `distribution` (install mode) are
+`distribution` (install mode) and `rootfs`+`location` (import mode) are
 mutually exclusive; set exactly one. See
 [`docs/design-decisions/creation-model.md`](docs/design-decisions/creation-model.md)
 for why both exist and what each requires.
@@ -99,7 +109,7 @@ reference docs are generated under [`docs/`](docs/).
 ## Import
 
 ```bash
-terraform import wsl_distribution.worker worker
+terraform import wsl_distribution.debian1 debian1
 ```
 
 The distribution's registration name is the entire import identity. WSL
@@ -113,7 +123,7 @@ first `terraform plan` after import.
 ## ⚠️ Destructive operation warning
 
 `terraform destroy`, and any change to `wsl_distribution`'s `name`,
-`rootfs`, `location`, or `distribution`, unregisters the distribution via
+`distribution`, `rootfs`, or `location`, unregisters the distribution via
 `wsl --unregister`, which **permanently deletes its virtual disk and
 everything inside it**. There is no undo, and this provider does not take
 backups or add any safety net beyond what `terraform plan` already shows
@@ -123,9 +133,8 @@ you.
 
 v0.1.0 supports Terraform running on `windows_amd64` and `windows_arm64`
 only. See [`docs/design-decisions/platform-support.md`](docs/design-decisions/platform-support.md).
-Every v0.1.0 design decision (creation model, resource identity,
-Update vs. Replace, locale-independent parsing, platform support) has its
-own record under [`docs/design-decisions/`](docs/design-decisions/).
+Every v0.1.0 design decision is indexed in
+[`docs/design-decision-log.md`](docs/design-decision-log.md).
 
 ## Known limitations
 
@@ -138,18 +147,13 @@ own record under [`docs/design-decisions/`](docs/design-decisions/).
   provider makes a best effort (an empty parse result is treated as an
   empty list) but cannot guarantee correctness on every locale in this
   specific case.
-- **`rootfs`/`location`/`distribution` are unrecoverable on import.** See
+- **`distribution`/`rootfs`/`location` are unrecoverable on import.** See
   "Import" above.
 - **No machine-readable WSL CLI output.** All state reconciliation is
   parsed from `wsl --list --verbose`'s human-oriented table; see
   `internal/wsl/parser.go` and
   [`docs/design-decisions/locale-independent-parsing.md`](docs/design-decisions/locale-independent-parsing.md)
   for how that parsing stays locale-independent.
-- **Install mode cannot choose a custom registration name.** `wsl.exe`
-  registers a Store distribution under its own identifier, so `name` must
-  equal `distribution` in install mode; the provider rejects a mismatch
-  with a clear error rather than silently ignoring it. Use import mode if
-  you need an arbitrary name.
 - **Install mode needs Microsoft Store/network access** at apply time,
   which is outside this provider's control and can make `terraform apply`
   less deterministic than import mode; see
@@ -157,18 +161,25 @@ own record under [`docs/design-decisions/`](docs/design-decisions/).
 
 ## Development
 
-```bash
-go build ./...
-go test ./...
-go vet ./...
-gofmt -l .
+```powershell
+.\build.ps1          # fmt, vet, test, build
+.\build.ps1 test     # just the unit tests
+.\build.ps1 build
 ```
+
+[`build.ps1`](build.ps1) needs nothing beyond PowerShell and a Go
+toolchain already on PATH -- no `make`, no separate installer -- since
+this provider only ever builds/tests on native Windows anyway (see
+[`docs/design-decisions/platform-support.md`](docs/design-decisions/platform-support.md)).
+Its tasks are thin wrappers; run `go build ./...`, `go test ./...`,
+`go vet ./...`, or `gofmt -l -w .` directly if you'd rather skip the
+script entirely.
 
 Regenerate documentation under `docs/` after changing any schema
 (requires [tfplugindocs](https://github.com/hashicorp/terraform-plugin-docs)):
 
-```bash
-go generate ./...
+```powershell
+.\build.ps1 generate   # or: go generate ./...
 ```
 
 ### Acceptance tests
@@ -179,14 +190,20 @@ creation modes, each opt-in via its own environment variable so `go test`
 never creates a real distribution by accident:
 
 ```bash
-# Import mode: needs a small root filesystem tar (does not need to be
-# bootable -- this test never launches the distribution).
-TF_ACC=1 WSL_ACC_TEST_ROOTFS=C:\path\to\rootfs.tar go test ./internal/provider/... -v -run TestAccWSLDistributionResource_ImportMode
-
 # Install mode: no tar needed, but needs Microsoft Store/network access
 # and a distribution identifier not already registered on the host.
 TF_ACC=1 WSL_ACC_TEST_DISTRIBUTION=Ubuntu-24.04 go test ./internal/provider/... -v -run TestAccWSLDistributionResource_InstallMode
+
+# Import mode: needs a small root filesystem tar (does not need to be
+# bootable -- this test never launches the distribution).
+TF_ACC=1 WSL_ACC_TEST_ROOTFS=C:\path\to\rootfs.tar go test ./internal/provider/... -v -run TestAccWSLDistributionResource_ImportMode
 ```
+
+[`build.ps1`](build.ps1)'s `testacc` task is a shorthand for the same
+thing (it sets `TF_ACC=1` and runs `go test` against
+`./internal/provider/...` for you); you still need to set
+`WSL_ACC_TEST_DISTRIBUTION` or `WSL_ACC_TEST_ROOTFS` yourself first, e.g.
+`$env:WSL_ACC_TEST_DISTRIBUTION = "Ubuntu-24.04"; .\build.ps1 testacc`.
 
 They are not run automatically in CI (see
 [`.github/workflows/test.yml`](.github/workflows/test.yml)); run them

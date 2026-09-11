@@ -10,9 +10,11 @@ A Terraform provider for declaratively managing Windows Subsystem for Linux
 (WSL) distributions.
 
 This provider manages the **lifecycle of a WSL distribution's
-registration** on a Windows host -- creating it via `wsl --import`,
-observing it, an in-place WSL-version update, and deleting it via
-`wsl --unregister`. It does **not** manage anything inside a distribution:
+registration** on a Windows host -- creating it either by installing a
+Microsoft Store distribution (`wsl --install`) or by importing your own
+root filesystem tar (`wsl --import`), observing it, an in-place
+WSL-version update, and deleting it via `wsl --unregister`. It does
+**not** manage anything inside a distribution:
 no packages, files, services, or arbitrary command execution. Use
 cloud-init, Ansible, or another configuration-management tool for that.
 
@@ -37,8 +39,8 @@ terraform.exe
             +-- wsl.exe
                     |
                     +-- Ubuntu
-                    +-- worker1
-                    +-- worker2
+                    +-- debian1
+                    +-- debian2
 ```
 
 Running Terraform inside WSL and calling out to
@@ -74,7 +76,7 @@ provider "wsl" {
 ## Destructive operation warning
 
 `terraform destroy`, and any change to `wsl_distribution`'s `name`,
-`rootfs`, or `location`, unregisters the distribution via
+`distribution`, `rootfs`, or `location`, unregisters the distribution via
 `wsl --unregister`, which **permanently deletes its virtual disk and
 everything inside it**. This provider does not take backups or add any
 other safety net beyond what `terraform plan` already shows you.

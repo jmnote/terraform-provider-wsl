@@ -9,6 +9,56 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
 
+// TestAccWSLDistributionResource_InstallMode exercises the tar-less
+// creation path (`wsl --install <Distribution>`, the same primitive
+// everyday `wsl --install <Distribution>` uses) -- no rootfs file needed,
+// and no existing registered distribution is touched. It needs:
+//
+//   - TF_ACC=1
+//   - a real Windows host with WSL installed and Microsoft Store access
+//     (install mode fetches the distribution from the Store)
+//   - WSL_ACC_TEST_DISTRIBUTION set to a Store distribution identifier not
+//     already registered on the host, e.g. "Ubuntu-24.04" (see
+//     `wsl --list --online`); not set by default so this test, which can
+//     be slow and needs network/Store access, only runs opt-in
+//
+// Run: TF_ACC=1 WSL_ACC_TEST_DISTRIBUTION=Ubuntu-24.04 go test ./internal/provider/... -v -run TestAccWSLDistributionResource_InstallMode
+func TestAccWSLDistributionResource_InstallMode(t *testing.T) {
+	distribution := os.Getenv("WSL_ACC_TEST_DISTRIBUTION")
+	if distribution == "" {
+		t.Skip("set WSL_ACC_TEST_DISTRIBUTION to a Store distribution identifier to run this acceptance test")
+	}
+
+	// EXPERIMENTAL / under verification: name is deliberately set to a
+	// fixed value different from distribution here, to verify against a
+	// real install whether wsl.exe's --name actually works (see
+	// createInstall in internal/wsl/client.go). If it does not, revert
+	// this test to name == distribution and restore the client.go/
+	// ValidateConfig checks that used to require that.
+	name := "testacc-wsl-distribution-install-test"
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccDistributionInstallConfig(name, distribution),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("wsl_distribution.test", "name", name),
+					resource.TestCheckResourceAttr("wsl_distribution.test", "distribution", distribution),
+					resource.TestCheckResourceAttrSet("wsl_distribution.test", "version"),
+					resource.TestCheckResourceAttrSet("wsl_distribution.test", "state"),
+				),
+			},
+			{
+				ResourceName:            "wsl_distribution.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"distribution"}, // unrecoverable on import; see docs/design-decisions/observable-state.md
+			},
+		},
+	})
+}
+
 // TestAccWSLDistributionResource_ImportMode creates, updates (WSL version),
 // and destroys a real WSL distribution via the import creation mode
 // (rootfs + location). It needs:
@@ -29,7 +79,7 @@ func TestAccWSLDistributionResource_ImportMode(t *testing.T) {
 		t.Skip("set WSL_ACC_TEST_ROOTFS to a root filesystem tar to run this acceptance test")
 	}
 
-	name := "tfacc-wsl-distribution-import-test"
+	name := "testacc-wsl-distribution-import-test"
 	location := filepath.Join(os.TempDir(), name)
 
 	resource.Test(t, resource.TestCase{
@@ -61,48 +111,13 @@ func TestAccWSLDistributionResource_ImportMode(t *testing.T) {
 	})
 }
 
-// TestAccWSLDistributionResource_InstallMode exercises the tar-less
-// creation path (`wsl --install --distribution`, the same primitive
-// everyday `wsl --install <Distribution>` uses) -- no rootfs file needed,
-// and no existing registered distribution is touched. It needs:
-//
-//   - TF_ACC=1
-//   - a real Windows host with WSL installed and Microsoft Store access
-//     (install mode fetches the distribution from the Store)
-//   - WSL_ACC_TEST_DISTRIBUTION set to a Store distribution identifier not
-//     already registered on the host, e.g. "Ubuntu-24.04" (see
-//     `wsl --list --online`); not set by default so this test, which can
-//     be slow and needs network/Store access, only runs opt-in
-//
-// Run: TF_ACC=1 WSL_ACC_TEST_DISTRIBUTION=Ubuntu-24.04 go test ./internal/provider/... -v -run TestAccWSLDistributionResource_InstallMode
-func TestAccWSLDistributionResource_InstallMode(t *testing.T) {
-	distribution := os.Getenv("WSL_ACC_TEST_DISTRIBUTION")
-	if distribution == "" {
-		t.Skip("set WSL_ACC_TEST_DISTRIBUTION to a Store distribution identifier to run this acceptance test")
-	}
-
-	resource.Test(t, resource.TestCase{
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				// name must equal distribution in install mode; see
-				// docs/design-decisions/creation-model.md.
-				Config: testAccDistributionInstallConfig(distribution),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("wsl_distribution.test", "name", distribution),
-					resource.TestCheckResourceAttr("wsl_distribution.test", "distribution", distribution),
-					resource.TestCheckResourceAttrSet("wsl_distribution.test", "version"),
-					resource.TestCheckResourceAttrSet("wsl_distribution.test", "state"),
-				),
-			},
-			{
-				ResourceName:            "wsl_distribution.test",
-				ImportState:             true,
-				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"distribution"}, // unrecoverable on import; see docs/design-decisions/observable-state.md
-			},
-		},
-	})
+func testAccDistributionInstallConfig(name, distribution string) string {
+	return fmt.Sprintf(`
+resource "wsl_distribution" "test" {
+  name         = %[1]q
+  distribution = %[2]q
+}
+`, name, distribution)
 }
 
 func testAccDistributionImportConfig(name, rootfs, location string, version int) string {
@@ -114,13 +129,4 @@ resource "wsl_distribution" "test" {
   version  = %[4]d
 }
 `, name, rootfs, location, version)
-}
-
-func testAccDistributionInstallConfig(distribution string) string {
-	return fmt.Sprintf(`
-resource "wsl_distribution" "test" {
-  name         = %[1]q
-  distribution = %[1]q
-}
-`, distribution)
 }

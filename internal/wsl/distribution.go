@@ -4,7 +4,7 @@ package wsl
 // reported by `wsl.exe --list --verbose`.
 type Distribution struct {
 	// Name is the distribution's registration name, e.g. "Ubuntu-24.04" or
-	// "worker". WSL treats this name case-insensitively.
+	// "debian3". WSL treats this name case-insensitively.
 	Name string
 
 	// State is the run state column exactly as printed by wsl.exe (for
@@ -30,20 +30,31 @@ type Distribution struct {
 // docs/design-decisions/creation-model.md for why both are supported and
 // how they differ:
 //
+//   - Install mode (Distribution set): `wsl --install <Distribution>`, the
+//     same primitive `wsl --install <Distribution>` uses day to day to
+//     fetch a Microsoft Store distribution. No Rootfs/Location needed.
+//     Name is optional: when empty, wsl.exe registers it under
+//     Distribution itself (its own default when `--name` is omitted);
+//     when set to something else, `--name` is passed to register it
+//     under that instead (confirmed working against a real install).
 //   - Import mode (Rootfs + Location set): `wsl --import`, bringing your
-//     own root filesystem tar/tar.gz. Supports an arbitrary Name.
-//   - Install mode (Distribution set): `wsl --install --distribution`,
-//     the same primitive `wsl --install <Distribution>` uses day to day
-//     to fetch a Microsoft Store distribution. No Rootfs/Location needed.
-//     Name must equal Distribution: `--name` is not supported when
-//     installing a legacy Store distribution (confirmed during research;
-//     see docs/design-decisions/creation-model.md), so the registration
-//     name is whatever the Store distribution is called, not a name
-//     Terraform can choose.
+//     own root filesystem tar/tar.gz (a `.wsl` file -- a tar archive
+//     Microsoft's own custom-distro tooling produces -- works here too).
+//     Supports an arbitrary Name.
 type CreateOptions struct {
-	// Name is the distribution's registration name. Required in both
-	// modes; in install mode it must equal Distribution.
+	// Name is the distribution's registration name. Required in import
+	// mode. Optional in install mode: when empty, the caller is expected
+	// to have already resolved it to Distribution (see
+	// internal/provider/distribution_resource.go's Create), since this
+	// package itself never guesses at Terraform-facing defaults.
 	Name string
+
+	// Distribution is a Microsoft Store distribution identifier (e.g.
+	// "Ubuntu-24.04"), installed via `wsl --install <Distribution>`.
+	// Install mode only; mutually exclusive with Rootfs/Location. Needs
+	// no tar file and does not fetch or touch any other distribution
+	// already registered on the host.
+	Distribution string
 
 	// Rootfs is the path to a tar/tar.gz root filesystem archive that
 	// `wsl --import` will extract into the new distribution. Import mode
@@ -55,13 +66,6 @@ type CreateOptions struct {
 	// Distribution. WSL creates this directory if it does not already
 	// exist.
 	Location string
-
-	// Distribution is a Microsoft Store distribution identifier (e.g.
-	// "Ubuntu-24.04"), installed via `wsl --install --distribution`.
-	// Install mode only; mutually exclusive with Rootfs/Location. Needs
-	// no tar file and does not fetch or touch any other distribution
-	// already registered on the host.
-	Distribution string
 
 	// Version selects WSL 1 or WSL 2 for the new distribution. Zero means
 	// "let wsl.exe use its configured default version". In import mode

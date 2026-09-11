@@ -1,6 +1,5 @@
-resource "wsl_distribution" "worker" {
-  name     = "worker"
-  rootfs   = "C:\\images\\ubuntu-24.04.tar"
-  location = "D:\\WSL\\worker"
-  version  = 2
+# Install mode: no rootfs tar needed. name is optional here and defaults
+# to distribution (wsl.exe's own default when --name is not passed).
+resource "wsl_distribution" "ubuntu" {
+  distribution = "Ubuntu-24.04"
 }

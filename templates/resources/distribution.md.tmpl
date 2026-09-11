@@ -10,13 +10,31 @@ description: |-
 
 ## Example Usage
 
-### Import mode (bring your own rootfs tar)
+### Install mode (Microsoft Store distribution, no tar needed)
 
 {{tffile "examples/resources/wsl_distribution/resource.tf"}}
 
-### Install mode (Microsoft Store distribution, no tar needed)
+Valid values for `distribution` come from WSL's own distribution catalog
+(`wsl --list --online`, backed by
+[`DistributionInfo.json`](https://github.com/microsoft/WSL/blob/master/distributions/DistributionInfo.json)
+in the `microsoft/WSL` repository). A bare flavor name like `"Ubuntu"`
+floats to whichever entry that flavor's catalog currently marks
+`Default: true`; a specific entry name like `"Ubuntu-24.04"` pins to that
+one.
 
-{{tffile "examples/resources/wsl_distribution/resource_install.tf"}}
+### Install mode with a custom name
+
+{{tffile "examples/resources/wsl_distribution/resource_install_custom_name.tf"}}
+
+### Import mode (bring your own rootfs tar, or a `.wsl` file)
+
+{{tffile "examples/resources/wsl_distribution/resource_import.tf"}}
+
+A `.wsl` file (the packaging format `wsl --install --from-file` and the
+Microsoft Store both use -- it's a tar archive with a `.wsl` extension;
+see [Microsoft's custom distro guide](https://learn.microsoft.com/en-us/windows/wsl/build-custom-distro))
+works as `rootfs` here too: `wsl --import` accepts it exactly like a plain
+`.tar`/`.tar.gz`, with no separate attribute needed for it.
 
 {{ .SchemaMarkdown | trimspace }}
 
@@ -26,8 +44,8 @@ Import uses the distribution's registration name as the entire import ID:
 
 {{codefile "shell" .ImportFile}}
 
-Because WSL exposes no way to read back the original `rootfs`/`location`
-or `distribution`, those attributes are left unset by import. Write
+Because WSL exposes no way to read back the original `distribution`,
+`rootfs`, or `location`, those attributes are left unset by import. Write
 matching values into your configuration before the next `terraform plan`;
 see [design-decisions/observable-state.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design-decisions/observable-state.md)
 for why, and how the schema avoids proposing a destructive replace on that
