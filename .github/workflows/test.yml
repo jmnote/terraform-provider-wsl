@@ -1,0 +1,45 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # This provider only builds/runs on Windows (see
+    # docs/design-decisions/platform-support.md), so CI runs on a Windows
+    # runner rather than the more common ubuntu-latest.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go build
+        run: go build ./...
+
+      # Unit tests only: acceptance tests (TF_ACC=1) create and destroy
+      # real WSL distributions and are intentionally not run in CI. See
+      # README.md, "Acceptance tests".
+      - name: go test
+        run: go test ./... -v

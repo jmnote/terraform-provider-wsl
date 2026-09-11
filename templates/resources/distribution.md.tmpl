@@ -1,0 +1,34 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.ProviderName}}"
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+{{ .Description | trimspace }}
+
+## Example Usage
+
+### Import mode (bring your own rootfs tar)
+
+{{tffile "examples/resources/wsl_distribution/resource.tf"}}
+
+### Install mode (Microsoft Store distribution, no tar needed)
+
+{{tffile "examples/resources/wsl_distribution/resource_install.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import uses the distribution's registration name as the entire import ID:
+
+{{codefile "shell" .ImportFile}}
+
+Because WSL exposes no way to read back the original `rootfs`/`location`
+or `distribution`, those attributes are left unset by import. Write
+matching values into your configuration before the next `terraform plan`;
+see [design-decisions/observable-state.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design-decisions/observable-state.md)
+for why, and how the schema avoids proposing a destructive replace on that
+first plan.
