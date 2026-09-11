@@ -1,0 +1,28 @@
+name: pr-auto-assign
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  assign-owner:
+    # Assigns the repository owner to every new PR (including ones opened
+    # by the owner themselves, which is a harmless no-op) so external
+    # contributions get triaged without relying on someone noticing a new
+    # PR manually. Uses the built-in actions/github-script rather than a
+    # third-party marketplace action, matching this repo's general
+    # preference for minimal external dependencies.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              assignees: [context.repo.owner],
+            });
