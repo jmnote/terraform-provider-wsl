@@ -1,4 +1,4 @@
-# terraform-provider-wsl
+# WSL Terraform Provider
 
 A Terraform provider for declaratively managing Windows Subsystem for Linux
 (WSL) distributions.
