@@ -263,12 +263,16 @@ func (r *distributionResource) Create(ctx context.Context, req resource.CreateRe
 	if plan.Location.IsUnknown() {
 		plan.Location = types.StringNull()
 	}
-
-	resp.Diagnostics.Append(r.refresh(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
+	// Preserve the successful registration even if the following read fails.
+	// Unobserved computed values must be null, not unknown, in partial state.
+	if plan.Version.IsUnknown() {
+		plan.Version = types.Int64Null()
+	}
+	if plan.State.IsUnknown() {
+		plan.State = types.StringNull()
 	}
 
+	resp.Diagnostics.Append(r.refresh(ctx, &plan)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -308,6 +312,18 @@ func (r *distributionResource) Update(ctx context.Context, req resource.UpdateRe
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	// Creation inputs cannot be read back from WSL. An update can mark
+	// omitted computed inputs unknown; retain their previous values (including
+	// null for the unused creation mode) while adopting known configured values.
+	if plan.Distribution.IsUnknown() {
+		plan.Distribution = state.Distribution
+	}
+	if plan.Rootfs.IsUnknown() {
+		plan.Rootfs = state.Rootfs
+	}
+	if plan.Location.IsUnknown() {
+		plan.Location = state.Location
 	}
 
 	if !plan.Version.IsUnknown() && !plan.Version.IsNull() && plan.Version.ValueInt64() != state.Version.ValueInt64() {

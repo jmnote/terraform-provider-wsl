@@ -42,6 +42,11 @@ text:
   from a genuine failure (missing `wsl.exe`, WSL not installed, etc.) short
   of hard-coding known message strings per locale, which this provider
   deliberately does not do; see "Known limitations" in README.md.
+- Failed list commands always return an error, even when stdout parses
+  into zero rows. Treating arbitrary error output as an empty registry
+  would remove existing resources from Terraform state during a service
+  or access failure. Consequently, a non-zero empty-registry response
+  requires the user to confirm deletion before removing stale state.
 - Any future change to `internal/wsl/parser.go` must preserve the
   "columns split on 2+ spaces, last field is the locale-invariant anchor"
   approach rather than reintroducing literal English text matching.

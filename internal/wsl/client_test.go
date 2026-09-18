@@ -46,15 +46,9 @@ func TestClient_List(t *testing.T) {
 }
 
 func TestClient_List_Empty(t *testing.T) {
-	// wsl.exe exits non-zero, with locale-dependent text, when there are
-	// zero registered distributions. List should treat that as an empty
-	// list rather than surfacing an error, per the documented best-effort
-	// handling in client.go.
+	// Only a successful list can establish that there are no distributions.
 	runner := &fakeRunner{fn: func(args []string) (Result, error) {
-		return Result{
-			Stdout:   []byte("Windows Subsystem for Linux has no installed distributions.\n"),
-			ExitCode: 1,
-		}, errors.New("exit code 1")
+		return Result{}, nil
 	}}
 	c := NewClient(runner)
 
@@ -64,6 +58,37 @@ func TestClient_List_Empty(t *testing.T) {
 	}
 	if len(dists) != 0 {
 		t.Errorf("got %d distributions, want 0", len(dists))
+	}
+}
+
+func TestClient_ListFailurePreservesError(t *testing.T) {
+	for _, output := range []string{
+		"Access is denied.\n",
+		"WSL service unavailable.\n",
+		"Windows Subsystem for Linux has no installed distributions.\n",
+		sampleList, // Even a partial table cannot establish a complete registry.
+	} {
+		t.Run(strings.TrimSpace(output), func(t *testing.T) {
+			failure := errors.New("exit code 1")
+			runner := &fakeRunner{fn: func(args []string) (Result, error) {
+				return Result{Stdout: utf16LEBytes(output), ExitCode: 1}, failure
+			}}
+			c := NewClient(runner)
+			if _, err := c.List(context.Background()); !errors.Is(err, failure) || !strings.Contains(err.Error(), strings.TrimSpace(output)) {
+				t.Fatalf("List error = %v, want original failure and output", err)
+			}
+			if _, err := c.Get(context.Background(), "worker"); !errors.Is(err, failure) || errors.Is(err, ErrNotFound) {
+				t.Fatalf("Get error = %v, want failure rather than ErrNotFound", err)
+			}
+			if err := c.Delete(context.Background(), "worker"); !errors.Is(err, failure) {
+				t.Fatalf("Delete error = %v, want failure", err)
+			}
+			for _, call := range runner.calls {
+				if call[0] != "--list" {
+					t.Fatalf("unexpected mutation after failed list: %v", call)
+				}
+			}
+		})
 	}
 }
 

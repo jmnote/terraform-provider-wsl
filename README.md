@@ -144,9 +144,10 @@ Every v0.1.0 design decision is indexed in
   locale-independent way to distinguish that from a real failure (missing
   `wsl.exe`, WSL not installed); see
   [microsoft/WSL#6235](https://github.com/microsoft/WSL/issues/6235). This
-  provider makes a best effort (an empty parse result is treated as an
-  empty list) but cannot guarantee correctness on every locale in this
-  specific case.
+  provider propagates failed list commands as errors to preserve state.
+  If the last distribution was removed outside Terraform and WSL returns
+  this error, refresh cannot automatically reconcile its removal. Confirm
+  the deletion before explicitly removing that resource from Terraform state.
 - **`distribution`/`rootfs`/`location` are unrecoverable on import.** See
   "Import" above.
 - **No machine-readable WSL CLI output.** All state reconciliation is

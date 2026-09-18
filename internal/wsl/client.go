@@ -64,23 +64,10 @@ func NewClient(runner Runner) Client {
 func (c *client) List(ctx context.Context) ([]Distribution, error) {
 	result, err := c.runner.Run(ctx, "--list", "--verbose")
 	if err != nil {
-		// wsl.exe exits non-zero, with a localized message *printed to
-		// stdout*, when zero distributions are registered at all -- there
-		// is currently no machine-readable way to distinguish that from a
-		// real failure (see https://github.com/microsoft/WSL/issues/6235,
-		// and docs/design-decisions/locale-independent-parsing.md). Best
-		// effort: if stdout is non-empty but still parses into zero rows,
-		// treat it as that known case. The len(result.Stdout) > 0 guard
-		// matters: a *failure to even run* wsl.exe (missing executable,
-		// context canceled) also parses its empty Stdout into zero rows,
-		// and must not be masked the same way -- that previously caused
-		// every wsl_distribution resource to look deleted (ErrNotFound)
-		// and be silently dropped from state on the next Read whenever
-		// wsl.exe could not be run at all.
-		dists, parseErr := ParseListVerbose(result.Stdout)
-		if parseErr == nil && len(dists) == 0 && len(result.Stdout) > 0 {
-			return nil, nil
-		}
+		// A localized error message is not evidence of an empty registry.
+		// Some WSL versions also fail when no distributions exist, but
+		// suppressing that ambiguous error would let service/access failures
+		// make Read forget existing resources and Delete report false success.
 		return nil, fmt.Errorf("wsl: list distributions: %w %s", err, describeOutput(result))
 	}
 
