@@ -1,0 +1,1 @@
+terraform import wsl_distribution.debian3 debian3

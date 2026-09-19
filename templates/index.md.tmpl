@@ -1,0 +1,62 @@
+---
+page_title: "wsl Provider"
+description: |-
+  A Terraform provider for declaratively managing Windows Subsystem for Linux distributions.
+---
+
+# wsl Provider
+
+A Terraform provider for declaratively managing Windows Subsystem for Linux
+(WSL) distributions.
+
+This provider manages the **lifecycle of a WSL distribution's
+registration** on a Windows host -- creating it either by installing a
+Microsoft Store distribution (`wsl --install`) or by importing your own
+root filesystem tar (`wsl --import`), observing it, an in-place
+WSL-version update, and deleting it via `wsl --unregister`. It does
+**not** manage anything inside a distribution:
+no packages, files, services, or arbitrary command execution. Use
+cloud-init, Ansible, or another configuration-management tool for that.
+
+## Requirements
+
+- Windows (`windows_amd64` or `windows_arm64`); this provider only runs as
+  part of Terraform executing natively on Windows, not inside a WSL
+  distribution.
+- WSL installed and `wsl.exe` available (on PATH, or pointed to via the
+  `executable` provider argument).
+- Terraform (a recent 1.x release).
+
+## Execution model
+
+```text
+Windows
+
+terraform.exe
+    |
+    +-- terraform-provider-wsl.exe
+            |
+            +-- wsl.exe
+                    |
+                    +-- Ubuntu
+                    +-- debian1
+                    +-- debian2
+```
+
+Running Terraform inside WSL and calling out to
+`/mnt/c/Windows/System32/wsl.exe` is not supported in v0.1.0; see
+[docs/design-decisions/platform-support.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design-decisions/platform-support.md).
+
+## Example Usage
+
+{{tffile "examples/provider/provider.tf"}}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Destructive operation warning
+
+`terraform destroy`, and any change to `wsl_distribution`'s `name`,
+`distribution`, `rootfs`, or `location`, unregisters the distribution via
+`wsl --unregister`, which **permanently deletes its virtual disk and
+everything inside it**. This provider does not take backups or add any
+other safety net beyond what `terraform plan` already shows you.

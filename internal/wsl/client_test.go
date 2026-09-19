@@ -1,0 +1,473 @@
+package wsl
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+// fakeRunner is a scriptable Runner used to unit test client without a real
+// wsl.exe or a real Windows/WSL host.
+type fakeRunner struct {
+	calls []([]string)
+	fn    func(args []string) (Result, error)
+}
+
+func (f *fakeRunner) Run(_ context.Context, args ...string) (Result, error) {
+	f.calls = append(f.calls, args)
+	if f.fn != nil {
+		return f.fn(args)
+	}
+	return Result{}, nil
+}
+
+const sampleList = "  NAME      STATE           VERSION\n" +
+	"* Ubuntu    Running         2\n" +
+	"  worker    Stopped         2\n"
+
+func TestClient_List(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		return Result{Stdout: []byte(sampleList)}, nil
+	}}
+	c := NewClient(runner)
+
+	dists, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dists) != 2 {
+		t.Fatalf("got %d distributions, want 2", len(dists))
+	}
+	if len(runner.calls) != 1 || runner.calls[0][0] != "--list" || runner.calls[0][1] != "--verbose" {
+		t.Errorf("unexpected runner call: %+v", runner.calls)
+	}
+}
+
+func TestClient_List_Empty(t *testing.T) {
+	// Only a successful list can establish that there are no distributions.
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		return Result{}, nil
+	}}
+	c := NewClient(runner)
+
+	dists, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dists) != 0 {
+		t.Errorf("got %d distributions, want 0", len(dists))
+	}
+}
+
+func TestClient_List_EmptyAfterVerboseFailure(t *testing.T) {
+	// WSL can report an empty registry as a failed verbose listing. The quiet
+	// form is the locale-independent confirmation that no names exist.
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		if len(args) == 2 && args[1] == "--verbose" {
+			return Result{Stdout: utf16LEBytes("Windows Subsystem for Linux has no installed distributions.\r\n")}, errors.New("exit code 1")
+		}
+		return Result{}, nil
+	}}
+	c := NewClient(runner)
+
+	dists, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dists) != 0 {
+		t.Fatalf("got %d distributions, want 0", len(dists))
+	}
+	if len(runner.calls) != 2 || runner.calls[1][1] != "--quiet" {
+		t.Errorf("calls = %v, want verbose followed by quiet fallback", runner.calls)
+	}
+}
+
+func TestClient_ListFailureDoesNotMaskNonEmptyQuietOutput(t *testing.T) {
+	failure := errors.New("verbose failed")
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		if len(args) == 2 && args[1] == "--verbose" {
+			return Result{Stdout: []byte("service unavailable")}, failure
+		}
+		return Result{Stdout: []byte("Ubuntu\r\n")}, nil
+	}}
+	c := NewClient(runner)
+
+	if _, err := c.List(context.Background()); !errors.Is(err, failure) {
+		t.Fatalf("List error = %v, want original verbose failure", err)
+	}
+}
+
+type blockingRunner struct {
+	mu      sync.Mutex
+	calls   [][]string
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingRunner) Run(_ context.Context, args ...string) (Result, error) {
+	r.mu.Lock()
+	r.calls = append(r.calls, args)
+	r.mu.Unlock()
+	if len(args) == 2 && args[1] == "--verbose" {
+		select {
+		case <-r.entered:
+		default:
+			close(r.entered)
+		}
+		<-r.release
+	}
+	return Result{Stdout: []byte(sampleList)}, nil
+}
+
+func TestClient_ReadDoesNotOverlapMutation(t *testing.T) {
+	runner := &blockingRunner{entered: make(chan struct{}), release: make(chan struct{})}
+	c := NewClient(runner)
+
+	listDone := make(chan struct{})
+	go func() {
+		_, _ = c.List(context.Background())
+		close(listDone)
+	}()
+	<-runner.entered
+
+	setVersionDone := make(chan struct{})
+	go func() {
+		_ = c.SetVersion(context.Background(), "worker", 2)
+		close(setVersionDone)
+	}()
+	select {
+	case <-setVersionDone:
+		t.Fatal("SetVersion overlapped an in-progress List")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(runner.release)
+	<-listDone
+	<-setVersionDone
+}
+
+func TestClient_ListFailurePreservesError(t *testing.T) {
+	for _, output := range []string{
+		"Access is denied.\n",
+		"WSL service unavailable.\n",
+		"Windows Subsystem for Linux has no installed distributions.\n",
+		sampleList, // Even a partial table cannot establish a complete registry.
+	} {
+		t.Run(strings.TrimSpace(output), func(t *testing.T) {
+			failure := errors.New("exit code 1")
+			runner := &fakeRunner{fn: func(args []string) (Result, error) {
+				return Result{Stdout: utf16LEBytes(output), ExitCode: 1}, failure
+			}}
+			c := NewClient(runner)
+			if _, err := c.List(context.Background()); !errors.Is(err, failure) || !strings.Contains(err.Error(), strings.TrimSpace(output)) {
+				t.Fatalf("List error = %v, want original failure and output", err)
+			}
+			if _, err := c.Get(context.Background(), "worker"); !errors.Is(err, failure) || errors.Is(err, ErrNotFound) {
+				t.Fatalf("Get error = %v, want failure rather than ErrNotFound", err)
+			}
+			if err := c.Delete(context.Background(), "worker"); !errors.Is(err, failure) {
+				t.Fatalf("Delete error = %v, want failure", err)
+			}
+			for _, call := range runner.calls {
+				if call[0] != "--list" {
+					t.Fatalf("unexpected mutation after failed list: %v", call)
+				}
+			}
+		})
+	}
+}
+
+// TestClient_List_ExecutableNotFound guards a real bug: a failure to run
+// wsl.exe at all (here simulated the same way ProcessRunner reports it --
+// an error with empty Stdout/Stderr) was previously indistinguishable from
+// the "zero distributions registered" case above, since both parse an
+// empty/non-table Stdout into zero rows. List must surface this as an
+// error, not silently return an empty list -- otherwise Get/Read treat
+// every distribution as deleted (ErrNotFound) whenever wsl.exe cannot be
+// run at all, e.g. a misconfigured `executable` provider argument.
+func TestClient_List_ExecutableNotFound(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		return Result{}, fmt.Errorf("%w: wsl.exe: not found", ErrExecutableNotFound)
+	}}
+	c := NewClient(runner)
+
+	dists, err := c.List(context.Background())
+	if err == nil {
+		t.Fatalf("got nil error and %d distributions, want an error", len(dists))
+	}
+	if !errors.Is(err, ErrExecutableNotFound) {
+		t.Errorf("err = %v, want it to wrap ErrExecutableNotFound", err)
+	}
+}
+
+func TestClient_Get_Found(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		return Result{Stdout: []byte(sampleList)}, nil
+	}}
+	c := NewClient(runner)
+
+	d, err := c.Get(context.Background(), "WORKER") // exercise case-insensitivity
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.Name != "worker" || d.Version != 2 {
+		t.Errorf("unexpected distribution: %+v", d)
+	}
+}
+
+func TestClient_Get_NotFound(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		return Result{Stdout: []byte(sampleList)}, nil
+	}}
+	c := NewClient(runner)
+
+	_, err := c.Get(context.Background(), "does-not-exist")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("got error %v, want ErrNotFound", err)
+	}
+}
+
+func TestClient_Create_ImportMode(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		return Result{}, nil
+	}}
+	c := NewClient(runner)
+
+	err := c.Create(context.Background(), CreateOptions{
+		Name:     "my worker",
+		Rootfs:   `C:\images\ubuntu 24.04.tar`,
+		Location: `D:\WSL\my worker`,
+		Version:  2,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"--import", "my worker", `D:\WSL\my worker`, `C:\images\ubuntu 24.04.tar`, "--version", "2"}
+	got := runner.calls[0]
+	if len(got) != len(want) {
+		t.Fatalf("args = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("arg[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestClient_Create_ImportMode_NoVersionOmitsFlag(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) { return Result{}, nil }}
+	c := NewClient(runner)
+
+	if err := c.Create(context.Background(), CreateOptions{Name: "n", Rootfs: "r.tar", Location: `C:\loc`}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, a := range runner.calls[0] {
+		if a == "--version" {
+			t.Errorf("did not expect --version in args: %v", runner.calls[0])
+		}
+	}
+}
+
+func TestClient_Create_ValidatesRequiredFields(t *testing.T) {
+	c := NewClient(&fakeRunner{})
+
+	cases := []CreateOptions{
+		{Rootfs: "r.tar", Location: `C:\loc`}, // missing name
+		{Name: "n", Location: `C:\loc`},       // missing rootfs
+		{Name: "n", Rootfs: "r.tar"},          // missing location
+		{Name: "n"},                           // neither mode set
+		{Name: "n", Rootfs: "r.tar", Location: `C:\loc`, Distribution: "Ubuntu"}, // both modes set
+	}
+	for _, opts := range cases {
+		if err := c.Create(context.Background(), opts); err == nil {
+			t.Errorf("Create(%+v) = nil error, want validation error", opts)
+		}
+	}
+}
+
+func TestClient_Create_InstallMode(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) { return Result{}, nil }}
+	c := NewClient(runner)
+
+	err := c.Create(context.Background(), CreateOptions{Name: "Ubuntu-24.04", Distribution: "Ubuntu-24.04"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"--install", "Ubuntu-24.04", "--no-launch"}
+	got := runner.calls[0]
+	if len(got) != len(want) {
+		t.Fatalf("args = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("arg[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestClient_Create_InstallMode_AppliesRequestedVersion(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) { return Result{}, nil }}
+	c := NewClient(runner)
+
+	err := c.Create(context.Background(), CreateOptions{Name: "Ubuntu-24.04", Distribution: "Ubuntu-24.04", Version: 1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(runner.calls) != 2 {
+		t.Fatalf("got %d runner calls, want 2 (--install then --set-version): %+v", len(runner.calls), runner.calls)
+	}
+	setVersion := runner.calls[1]
+	want := []string{"--set-version", "Ubuntu-24.04", "1"}
+	for i := range want {
+		if setVersion[i] != want[i] {
+			t.Errorf("set-version arg[%d] = %q, want %q", i, setVersion[i], want[i])
+		}
+	}
+}
+
+// TestClient_Create_InstallMode_RollsBackOnSetVersionFailure guards the
+// partial-failure case: `wsl --install` succeeds but the follow-up
+// `wsl --set-version` fails. Without a rollback, the distribution would
+// exist on the host but Create still returns an error, so
+// internal/provider never saves state for it -- an orphan, invisible to
+// Terraform, that makes the next `wsl --install` of the same name fail
+// with "already exists". Create must instead unregister it so it stays
+// all-or-nothing.
+func TestClient_Create_InstallMode_RollsBackOnSetVersionFailure(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		if len(args) > 0 && args[0] == "--set-version" {
+			return Result{}, errors.New("set-version failed")
+		}
+		return Result{}, nil
+	}}
+	c := NewClient(runner)
+
+	err := c.Create(context.Background(), CreateOptions{Name: "Ubuntu-24.04", Distribution: "Ubuntu-24.04", Version: 1})
+	if err == nil {
+		t.Fatal("expected an error when set-version fails")
+	}
+	if !strings.Contains(err.Error(), "rolled back") {
+		t.Errorf("err = %v, want it to mention the rollback", err)
+	}
+
+	found := false
+	for _, call := range runner.calls {
+		if len(call) >= 2 && call[0] == "--unregister" && call[1] == "Ubuntu-24.04" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected --unregister to roll back the orphaned distribution, calls: %+v", runner.calls)
+	}
+}
+
+// TestClient_Create_InstallMode_PassesNameWhenDifferent covers passing a
+// custom registration name in install mode: --name is included whenever it
+// differs from --distribution. Confirmed working against a real install
+// (`wsl --install ArchLinux --name <custom> --no-launch`); see
+// docs/design-decisions/creation-model.md.
+func TestClient_Create_InstallMode_PassesNameWhenDifferent(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) { return Result{}, nil }}
+	c := NewClient(runner)
+
+	err := c.Create(context.Background(), CreateOptions{Name: "worker", Distribution: "Ubuntu-24.04"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"--install", "Ubuntu-24.04", "--name", "worker", "--no-launch"}
+	got := runner.calls[0]
+	if len(got) != len(want) {
+		t.Fatalf("args = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("arg[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestClient_Create_Failure_PreservesStderr(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		return Result{Stderr: []byte("distribution already exists")}, errors.New("exit code 1")
+	}}
+	c := NewClient(runner)
+
+	err := c.Create(context.Background(), CreateOptions{Name: "n", Rootfs: "r.tar", Location: `C:\loc`})
+	if err == nil || !strings.Contains(err.Error(), "distribution already exists") {
+		t.Fatalf("err = %v, want it to contain captured stderr", err)
+	}
+}
+
+func TestClient_SetVersion(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) { return Result{}, nil }}
+	c := NewClient(runner)
+
+	if err := c.SetVersion(context.Background(), "worker", 1); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"--set-version", "worker", "1"}
+	got := runner.calls[0]
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("arg[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestClient_SetVersion_RejectsInvalidVersion(t *testing.T) {
+	c := NewClient(&fakeRunner{})
+	if err := c.SetVersion(context.Background(), "worker", 3); err == nil {
+		t.Errorf("expected error for invalid version 3")
+	}
+}
+
+func TestClient_Delete_Idempotent(t *testing.T) {
+	// Distribution already absent: Delete must succeed without ever
+	// calling --unregister.
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		return Result{Stdout: []byte("  NAME  STATE  VERSION\n")}, nil
+	}}
+	c := NewClient(runner)
+
+	if err := c.Delete(context.Background(), "worker"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, call := range runner.calls {
+		if len(call) > 0 && call[0] == "--unregister" {
+			t.Errorf("did not expect --unregister to be called for an already-absent distribution")
+		}
+	}
+}
+
+func TestClient_Delete_Existing(t *testing.T) {
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		if len(args) > 0 && args[0] == "--list" {
+			return Result{Stdout: []byte(sampleList)}, nil
+		}
+		return Result{}, nil
+	}}
+	c := NewClient(runner)
+
+	if err := c.Delete(context.Background(), "worker"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	found := false
+	for _, call := range runner.calls {
+		if len(call) >= 2 && call[0] == "--unregister" && call[1] == "worker" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected --unregister worker to be called, calls: %+v", runner.calls)
+	}
+}
