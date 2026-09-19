@@ -164,36 +164,26 @@ func (r *distributionResource) ValidateConfig(ctx context.Context, req resource.
 		return
 	}
 
-	// Defer to apply time whenever any of these reference something not
-	// yet known (e.g. `distribution = some_resource.x.output`), rather
-	// than treating Unknown the same as "not set": isKnownNonEmpty would
-	// otherwise report every one of them as absent, and a perfectly valid
-	// config -- e.g. install mode with a `distribution` value that only
-	// becomes known once another resource is created -- would fail
-	// `terraform plan`/`validate` with a false "missing creation mode"
-	// error before that resource has even run.
-	if config.Distribution.IsUnknown() || config.Rootfs.IsUnknown() ||
-		config.Location.IsUnknown() || config.Name.IsUnknown() {
-		return
-	}
-
+	// Validate every condition whose inputs are known. An Unknown `name`
+	// must not suppress mode validation: creation-mode conflicts depend only
+	// on distribution/rootfs/location and are still actionable at plan time.
 	hasDistribution := isKnownNonEmpty(config.Distribution)
 	hasRootfs := isKnownNonEmpty(config.Rootfs)
 	hasLocation := isKnownNonEmpty(config.Location)
+	modeUnknown := config.Distribution.IsUnknown() || config.Rootfs.IsUnknown() || config.Location.IsUnknown()
 
-	switch {
-	case hasDistribution && (hasRootfs || hasLocation):
+	if hasDistribution && (hasRootfs || hasLocation) {
 		resp.Diagnostics.AddError(
 			"Conflicting creation mode",
 			"distribution is mutually exclusive with rootfs/location: set exactly one creation mode "+
 				"(install via distribution, or import via rootfs+location).",
 		)
-	case hasRootfs != hasLocation:
+	} else if !config.Rootfs.IsUnknown() && !config.Location.IsUnknown() && hasRootfs != hasLocation {
 		resp.Diagnostics.AddError(
 			"Incomplete import-mode configuration",
 			"rootfs and location must be set together for import mode.",
 		)
-	case !hasDistribution && !hasRootfs && !hasLocation:
+	} else if !modeUnknown && !hasDistribution && !hasRootfs && !hasLocation {
 		resp.Diagnostics.AddError(
 			"Missing creation mode",
 			"either distribution (install mode) or rootfs+location (import mode) must be set.",
@@ -203,7 +193,7 @@ func (r *distributionResource) ValidateConfig(ctx context.Context, req resource.
 	// name has no sensible default in import mode (unlike install mode,
 	// where an omitted name defaults to distribution), so it must be set
 	// explicitly there.
-	if (hasRootfs || hasLocation) && !isKnownNonEmpty(config.Name) {
+	if (hasRootfs || hasLocation) && !config.Name.IsUnknown() && !isKnownNonEmpty(config.Name) {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("name"),
 			"Missing required value",

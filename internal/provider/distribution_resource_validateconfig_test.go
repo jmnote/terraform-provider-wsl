@@ -116,6 +116,16 @@ func TestDistributionResource_ValidateConfig(t *testing.T) {
 			location:  "C:\\loc",
 			wantError: false,
 		},
+		{
+			// An Unknown name must not hide a mode conflict that is already
+			// completely known.
+			name:         "unknown name still catches conflicting mode",
+			cfgName:      unknownValue,
+			distribution: "Ubuntu-24.04",
+			rootfs:       "C:\\r.tar",
+			location:     "C:\\loc",
+			wantError:    true,
+		},
 	}
 
 	for _, tc := range cases {

@@ -116,14 +116,24 @@ func TestNameDefaultsToDistributionUnlessChanged(t *testing.T) {
 			name:              "distribution changing: does not carry the old default name forward",
 			priorDistribution: "Ubuntu-24.04",
 			newDistribution:   "Debian",
-			wantPlanValue:     types.StringUnknown(),
+			wantPlanValue:     types.StringValue("Debian"),
+		},
+		{
+			name:              "imported state with null distribution computes install default",
+			priorDistribution: "Ubuntu-24.04",
+			newDistribution:   "Ubuntu-24.04",
+			wantPlanValue:     types.StringValue("Ubuntu-24.04"),
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			stateDistribution := types.StringValue(tc.priorDistribution)
+			if tc.name == "imported state with null distribution computes install default" {
+				stateDistribution = types.StringNull()
+			}
 			state := buildState(t, distributionResourceModel{
-				Name: types.StringValue(tc.priorDistribution), Distribution: types.StringValue(tc.priorDistribution),
+				Name: types.StringValue(tc.priorDistribution), Distribution: stateDistribution,
 			})
 			// name omitted from config, same as relying on its documented default.
 			config := buildConfig(t, distributionResourceModel{

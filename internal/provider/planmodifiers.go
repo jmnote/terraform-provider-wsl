@@ -50,19 +50,15 @@ func (m requiresReplaceUnlessImportingModifier) PlanModifyString(ctx context.Con
 	delegate.PlanModifyString(ctx, req, resp)
 }
 
-// nameDefaultsToDistributionUnlessChanged behaves like
-// stringplanmodifier.UseStateForUnknown(), except it does not carry an
-// omitted name's prior value forward when distribution is changing.
+// nameDefaultsToDistributionUnlessChanged computes an omitted install-mode
+// name from distribution and otherwise behaves like
+// stringplanmodifier.UseStateForUnknown().
 //
-// In install mode, an omitted name defaults to distribution (see the name
-// attribute's schema description). distribution is RequiresReplace, so
-// changing it plans a brand-new resource -- but Terraform still proposes
-// carrying computed attributes forward from the prior object unless a plan
-// modifier says otherwise. Plain UseStateForUnknown() would therefore keep
-// the OLD distribution's name across the replace; Create's own defaulting
-// logic (`isKnownNonEmpty(plan.Name)`) then sees a non-empty planned name
-// and skips filling in the new distribution's default, registering the new
-// distribution under the previous one's name instead.
+// Computing this value in the modifier also avoids treating a freshly
+// imported state's null distribution as a change, which would otherwise
+// leave name Unknown and make the following RequiresReplace modifier plan a
+// needless replacement. Create retains a backstop for a distribution that is
+// still unknown at planning time.
 func nameDefaultsToDistributionUnlessChanged() planmodifier.String {
 	return nameDefaultsToDistributionUnlessChangedModifier{}
 }
@@ -79,17 +75,30 @@ func (m nameDefaultsToDistributionUnlessChangedModifier) MarkdownDescription(_ c
 }
 
 func (m nameDefaultsToDistributionUnlessChangedModifier) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	var stateDistribution, configDistribution types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("distribution"), &stateDistribution)...)
+	// An explicitly configured name, including an unknown expression, wins.
+	// Do not overwrite an expression that Terraform must resolve later.
+	if !req.ConfigValue.IsNull() {
+		return
+	}
+
+	var configDistribution types.String
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("distribution"), &configDistribution)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if !configDistribution.IsUnknown() && configDistribution.ValueString() != stateDistribution.ValueString() {
-		// distribution is changing: leave name Unknown so Create
-		// recomputes its default against the NEW distribution instead of
-		// inheriting the old one's.
+	if configDistribution.IsUnknown() {
+		// The default cannot be computed until the distribution expression is
+		// known. Create retains the same defaulting logic as an apply-time
+		// backstop for this case.
+		return
+	}
+	if isKnownNonEmpty(configDistribution) {
+		// Compute the documented default directly. This is important after
+		// import: state.distribution is null, so comparing state and config
+		// distributions would otherwise leave name unknown and the following
+		// RequiresReplace modifier would incorrectly force replacement.
+		resp.PlanValue = types.StringValue(configDistribution.ValueString())
 		return
 	}
 

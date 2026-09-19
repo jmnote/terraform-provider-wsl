@@ -70,3 +70,15 @@ func TestDecodeOutput_UTF16LENoBOM_CJKHeavy(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestValidUTF8AllowingTruncatedTailRejectsInvalidLeadBytes(t *testing.T) {
+	for _, b := range [][]byte{
+		{0xF5}, {0xF6}, {0xF7}, // outside the Unicode UTF-8 lead-byte range
+		{0xC0},       // overlong two-byte prefix
+		{0xE0, 0x80}, // invalid continuation range for E0
+	} {
+		if validUTF8AllowingTruncatedTail(b) {
+			t.Errorf("validUTF8AllowingTruncatedTail(%#v) = true, want false", b)
+		}
+	}
+}

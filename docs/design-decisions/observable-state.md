@@ -50,8 +50,9 @@ require replacement.
   than risking a wrong guess a user might trust.
 - `name` is also `Optional + Computed` (an omitted `name` in install mode
   defaults to `distribution`; see
-  [Support Both Install and Import Creation Modes](creation-model.md)),
-  but for a different reason than the other three: it is always resolved
-  to a known value by `Create` before it returns, and `ImportState`
-  populates it directly from the import ID. It is never left `null` the
-  way `distribution`/`rootfs`/`location` are.
+  [Support Both Install and Import Creation Modes](creation-model.md)).
+  Its plan modifier computes that default whenever `distribution` is known,
+  including immediately after import when state.distribution is null. `Create`
+  retains the same fallback for an apply-time unknown distribution, and
+  `ImportState` populates name directly from the import ID. It is never left
+  `null` the way `distribution`/`rootfs`/`location` are.

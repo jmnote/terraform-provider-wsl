@@ -138,16 +138,12 @@ Every v0.1.0 design decision is indexed in
 
 ## Known limitations
 
-- **Zero registered distributions.** `wsl --list --verbose` exits non-zero
-  with a localized message, and no table to parse, when a host has no WSL
-  distributions registered at all. There is currently no
-  locale-independent way to distinguish that from a real failure (missing
-  `wsl.exe`, WSL not installed); see
-  [microsoft/WSL#6235](https://github.com/microsoft/WSL/issues/6235). This
-  provider propagates failed list commands as errors to preserve state.
-  If the last distribution was removed outside Terraform and WSL returns
-  this error, refresh cannot automatically reconcile its removal. Confirm
-  the deletion before explicitly removing that resource from Terraform state.
+- **WSL list command fallback.** Some WSL versions return non-zero from
+  `wsl --list --verbose` when no distributions are registered. The provider
+  confirms that case with `wsl --list --quiet` and only treats it as an empty
+  registry when quiet listing succeeds with no names. Other failures remain
+  errors so refresh cannot silently remove resources from state. See
+  [microsoft/WSL#6235](https://github.com/microsoft/WSL/issues/6235).
 - **`distribution`/`rootfs`/`location` are unrecoverable on import.** See
   "Import" above.
 - **No machine-readable WSL CLI output.** All state reconciliation is

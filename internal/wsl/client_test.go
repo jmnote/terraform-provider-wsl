@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // fakeRunner is a scriptable Runner used to unit test client without a real
@@ -59,6 +61,93 @@ func TestClient_List_Empty(t *testing.T) {
 	if len(dists) != 0 {
 		t.Errorf("got %d distributions, want 0", len(dists))
 	}
+}
+
+func TestClient_List_EmptyAfterVerboseFailure(t *testing.T) {
+	// WSL can report an empty registry as a failed verbose listing. The quiet
+	// form is the locale-independent confirmation that no names exist.
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		if len(args) == 2 && args[1] == "--verbose" {
+			return Result{Stdout: utf16LEBytes("Windows Subsystem for Linux has no installed distributions.\r\n")}, errors.New("exit code 1")
+		}
+		return Result{}, nil
+	}}
+	c := NewClient(runner)
+
+	dists, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dists) != 0 {
+		t.Fatalf("got %d distributions, want 0", len(dists))
+	}
+	if len(runner.calls) != 2 || runner.calls[1][1] != "--quiet" {
+		t.Errorf("calls = %v, want verbose followed by quiet fallback", runner.calls)
+	}
+}
+
+func TestClient_ListFailureDoesNotMaskNonEmptyQuietOutput(t *testing.T) {
+	failure := errors.New("verbose failed")
+	runner := &fakeRunner{fn: func(args []string) (Result, error) {
+		if len(args) == 2 && args[1] == "--verbose" {
+			return Result{Stdout: []byte("service unavailable")}, failure
+		}
+		return Result{Stdout: []byte("Ubuntu\r\n")}, nil
+	}}
+	c := NewClient(runner)
+
+	if _, err := c.List(context.Background()); !errors.Is(err, failure) {
+		t.Fatalf("List error = %v, want original verbose failure", err)
+	}
+}
+
+type blockingRunner struct {
+	mu      sync.Mutex
+	calls   [][]string
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r *blockingRunner) Run(_ context.Context, args ...string) (Result, error) {
+	r.mu.Lock()
+	r.calls = append(r.calls, args)
+	r.mu.Unlock()
+	if len(args) == 2 && args[1] == "--verbose" {
+		select {
+		case <-r.entered:
+		default:
+			close(r.entered)
+		}
+		<-r.release
+	}
+	return Result{Stdout: []byte(sampleList)}, nil
+}
+
+func TestClient_ReadDoesNotOverlapMutation(t *testing.T) {
+	runner := &blockingRunner{entered: make(chan struct{}), release: make(chan struct{})}
+	c := NewClient(runner)
+
+	listDone := make(chan struct{})
+	go func() {
+		_, _ = c.List(context.Background())
+		close(listDone)
+	}()
+	<-runner.entered
+
+	setVersionDone := make(chan struct{})
+	go func() {
+		_ = c.SetVersion(context.Background(), "worker", 2)
+		close(setVersionDone)
+	}()
+	select {
+	case <-setVersionDone:
+		t.Fatal("SetVersion overlapped an in-progress List")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(runner.release)
+	<-listDone
+	<-setVersionDone
 }
 
 func TestClient_ListFailurePreservesError(t *testing.T) {

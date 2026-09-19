@@ -70,50 +70,22 @@ func validUTF8AllowingTruncatedTail(b []byte) bool {
 		return true
 	}
 
-	// The only incomplete sequence a truncation can leave is at the very
-	// end, and is at most 3 bytes (the longest UTF-8 sequence is 4 bytes).
+	// FullRune uses the standard library's complete UTF-8 acceptance table:
+	// malformed prefixes (including overlong, surrogate, and out-of-range
+	// encodings) are complete invalid runes, while a valid prefix cut off at
+	// the end is reported as incomplete. Only the final at-most-three bytes
+	// can be such a tail; require the preceding bytes to be fully valid.
 	maxTail := 3
 	if maxTail > len(b) {
 		maxTail = len(b)
 	}
 	for cut := 1; cut <= maxTail; cut++ {
 		head, tail := b[:len(b)-cut], b[len(b)-cut:]
-		if utf8.Valid(head) && isIncompleteUTF8Sequence(tail) {
+		if utf8.Valid(head) && !utf8.FullRune(tail) {
 			return true
 		}
 	}
 	return false
-}
-
-// isIncompleteUTF8Sequence reports whether tail is a well-formed prefix of
-// a multi-byte UTF-8 sequence that is missing one or more trailing
-// continuation bytes -- as opposed to bytes that are not part of any valid
-// UTF-8 sequence regardless of what might follow them.
-func isIncompleteUTF8Sequence(tail []byte) bool {
-	if len(tail) == 0 {
-		return false
-	}
-
-	var wantLen int
-	switch lead := tail[0]; {
-	case lead&0xE0 == 0xC0:
-		wantLen = 2
-	case lead&0xF0 == 0xE0:
-		wantLen = 3
-	case lead&0xF8 == 0xF0:
-		wantLen = 4
-	default:
-		return false
-	}
-	if wantLen <= len(tail) {
-		return false // a complete sequence would already have been valid
-	}
-	for _, c := range tail[1:] {
-		if c&0xC0 != 0x80 {
-			return false
-		}
-	}
-	return true
 }
 
 func looksLikeUTF16LE(b []byte) bool {

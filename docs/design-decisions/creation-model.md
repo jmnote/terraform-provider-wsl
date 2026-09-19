@@ -96,9 +96,12 @@ leaving it to the host's mutable `wsl --set-default-version` setting.
   distribution back (`wsl --unregister`) rather than leaving an orphan
   invisible to Terraform state; see `internal/wsl/client.go`.
 - Terraform runs multiple resources' CRUD concurrently. `internal/wsl`'s
-  `client` serializes its state-mutating calls (`Create`, `SetVersion`,
-  `Delete`) with a mutex, since WSL's distribution registration internals
-  are not documented as safe for concurrent registration/unregistration.
+  `client` serializes state-mutating calls (`Create`, `SetVersion`,
+  `Delete`) and excludes concurrent `List`/`Get` snapshots with an
+  `RWMutex`, since WSL's distribution registration internals are not
+  documented as safe for concurrent registration/unregistration or
+  read-during-write access. Independent read snapshots may still run in
+  parallel.
 - See [Observable State vs. Creation-Time Attributes](observable-state.md)
   for how the resource handles that neither mode's creation-time inputs
   are recoverable via `Read`.

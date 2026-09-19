@@ -35,18 +35,14 @@ text:
 
 ## Consequences
 
-- Parsing is robust to Windows display language for every case except one:
-  when a host has **zero** registered WSL distributions at all,
-  `wsl --list --verbose` exits non-zero with a localized message and no
-  table to parse. There is no locale-independent way to distinguish that
-  from a genuine failure (missing `wsl.exe`, WSL not installed, etc.) short
-  of hard-coding known message strings per locale, which this provider
-  deliberately does not do; see "Known limitations" in README.md.
-- Failed list commands always return an error, even when stdout parses
-  into zero rows. Treating arbitrary error output as an empty registry
-  would remove existing resources from Terraform state during a service
-  or access failure. Consequently, a non-zero empty-registry response
-  requires the user to confirm deletion before removing stale state.
+- Parsing is robust to Windows display language, including the empty-registry
+  case. When `wsl --list --verbose` fails, the client performs a fallback
+  `wsl --list --quiet`: a successful empty response confirms an empty registry
+  without matching localized text. If that fallback fails or reports names,
+  the original verbose error is preserved, so service/access failures cannot
+  silently remove resources from Terraform state.
+- The normal list path remains a single `wsl.exe` invocation; the quiet
+  fallback is used only after a verbose failure.
 - Any future change to `internal/wsl/parser.go` must preserve the
   "columns split on 2+ spaces, last field is the locale-invariant anchor"
   approach rather than reintroducing literal English text matching.

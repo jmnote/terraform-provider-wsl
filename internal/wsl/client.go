@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -46,14 +47,14 @@ type Client interface {
 type client struct {
 	runner Runner
 
-	// mu serializes every state-mutating wsl.exe invocation (Create,
-	// SetVersion, Delete). Terraform runs multiple resources' CRUD
+	// mu serializes state-mutating wsl.exe invocations and prevents them from
+	// racing read snapshots. Terraform runs multiple resources' CRUD
 	// concurrently (parallelism defaults to 10), and WSL's distribution
 	// registration internals (the Lxss registry hive, the per-distribution
 	// VHD) are not documented as safe for concurrent registration/
-	// unregistration, so this provider does not assume they are. List/Get
-	// are read-only and are not serialized by this lock.
-	mu sync.Mutex
+	// unregistration, so this provider does not assume they are. Concurrent
+	// read snapshots are allowed, but reads never overlap a mutation.
+	mu sync.RWMutex
 }
 
 // NewClient returns a Client that drives wsl.exe through runner.
@@ -62,20 +63,41 @@ func NewClient(runner Runner) Client {
 }
 
 func (c *client) List(ctx context.Context) ([]Distribution, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.list(ctx)
+}
+
+// list is List without locking, for callers that already hold c.mu.
+func (c *client) list(ctx context.Context) ([]Distribution, error) {
 	result, err := c.runner.Run(ctx, "--list", "--verbose")
 	if err != nil {
-		// A localized error message is not evidence of an empty registry.
-		// Some WSL versions also fail when no distributions exist, but
-		// suppressing that ambiguous error would let service/access failures
-		// make Read forget existing resources and Delete report false success.
-		return nil, fmt.Errorf("wsl: list distributions: %w %s", err, describeOutput(result))
+		verboseErr := fmt.Errorf("wsl: list distributions: %w %s", err, describeOutput(result))
+
+		// Some WSL versions return a non-zero status for verbose listing when
+		// the registry is empty. `--list --quiet` has no such ambiguity: an
+		// empty registry succeeds with empty output. Use it only as a fallback
+		// after verbose failure, so normal list operations remain one process
+		// invocation and service/access failures are not swallowed.
+		quietResult, quietErr := c.runner.Run(ctx, "--list", "--quiet")
+		if quietErr == nil && strings.TrimSpace(decodeOutput(quietResult.Stdout)) == "" {
+			return nil, nil
+		}
+		return nil, verboseErr
 	}
 
 	return ParseListVerbose(result.Stdout)
 }
 
 func (c *client) Get(ctx context.Context, name string) (*Distribution, error) {
-	dists, err := c.List(ctx)
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.get(ctx, name)
+}
+
+// get is Get without locking, for callers that already hold c.mu.
+func (c *client) get(ctx context.Context, name string) (*Distribution, error) {
+	dists, err := c.list(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +232,7 @@ func (c *client) Delete(ctx context.Context, name string) error {
 	// Check existence ourselves first, rather than inferring success from
 	// wsl.exe's (locale-dependent) message text, so Delete stays
 	// idempotent without any text matching.
-	_, err := c.Get(ctx, name)
+	_, err := c.get(ctx, name)
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}
