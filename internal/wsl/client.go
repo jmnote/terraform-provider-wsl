@@ -120,10 +120,11 @@ func (c *client) createInstall(ctx context.Context, opts CreateOptions) error {
 	// earlier research suggesting it was rejected for "legacy" Store
 	// distributions turned out to be outdated. See
 	// docs/design-decisions/creation-model.md.
-	args := []string{"--install", opts.Distribution, "--no-launch"}
+	args := []string{"--install", opts.Distribution}
 	if opts.Name != opts.Distribution {
 		args = append(args, "--name", opts.Name)
 	}
+	args = append(args, "--no-launch")
 
 	result, err := c.runner.Run(ctx, args...)
 	if err != nil {

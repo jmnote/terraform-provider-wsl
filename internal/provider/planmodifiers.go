@@ -3,8 +3,10 @@ package provider
 import (
 	"context"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 // requiresReplaceUnlessImporting behaves like
@@ -45,5 +47,52 @@ func (m requiresReplaceUnlessImportingModifier) PlanModifyString(ctx context.Con
 	}
 
 	delegate := stringplanmodifier.RequiresReplace()
+	delegate.PlanModifyString(ctx, req, resp)
+}
+
+// nameDefaultsToDistributionUnlessChanged behaves like
+// stringplanmodifier.UseStateForUnknown(), except it does not carry an
+// omitted name's prior value forward when distribution is changing.
+//
+// In install mode, an omitted name defaults to distribution (see the name
+// attribute's schema description). distribution is RequiresReplace, so
+// changing it plans a brand-new resource -- but Terraform still proposes
+// carrying computed attributes forward from the prior object unless a plan
+// modifier says otherwise. Plain UseStateForUnknown() would therefore keep
+// the OLD distribution's name across the replace; Create's own defaulting
+// logic (`isKnownNonEmpty(plan.Name)`) then sees a non-empty planned name
+// and skips filling in the new distribution's default, registering the new
+// distribution under the previous one's name instead.
+func nameDefaultsToDistributionUnlessChanged() planmodifier.String {
+	return nameDefaultsToDistributionUnlessChangedModifier{}
+}
+
+type nameDefaultsToDistributionUnlessChangedModifier struct{}
+
+func (m nameDefaultsToDistributionUnlessChangedModifier) Description(ctx context.Context) string {
+	return m.MarkdownDescription(ctx)
+}
+
+func (m nameDefaultsToDistributionUnlessChangedModifier) MarkdownDescription(_ context.Context) string {
+	return "Uses the prior state value for an unset name, except when distribution is changing, so a " +
+		"replace does not carry the previous distribution's default name forward onto the new one."
+}
+
+func (m nameDefaultsToDistributionUnlessChangedModifier) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	var stateDistribution, configDistribution types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("distribution"), &stateDistribution)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("distribution"), &configDistribution)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !configDistribution.IsUnknown() && configDistribution.ValueString() != stateDistribution.ValueString() {
+		// distribution is changing: leave name Unknown so Create
+		// recomputes its default against the NEW distribution instead of
+		// inheriting the old one's.
+		return
+	}
+
+	delegate := stringplanmodifier.UseStateForUnknown()
 	delegate.PlanModifyString(ctx, req, resp)
 }

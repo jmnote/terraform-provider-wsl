@@ -95,6 +95,52 @@ func TestDistributionResource_UpdateResolvesCreationInputs(t *testing.T) {
 	}
 }
 
+// TestDistributionResource_UpdatePreservesVersionOnRefreshFailure guards
+// against a real bug: Update applied a version change to the real WSL
+// distribution via SetVersion, but then discarded that change from state
+// whenever the post-update refresh (used to also pick up the new "state"
+// field) failed, because terraform-plugin-framework falls back to the
+// prior state when Update returns without calling resp.State.Set. Update
+// must persist the already-applied version even when the refresh fails.
+func TestDistributionResource_UpdatePreservesVersionOnRefreshFailure(t *testing.T) {
+	prior := distributionResourceModel{
+		Name: types.StringValue("worker"), Distribution: types.StringValue("Ubuntu"),
+		Version: types.Int64Value(1), State: types.StringValue("Stopped"),
+	}
+	planned := prior
+	planned.Version = types.Int64Value(2)
+	planned.State = types.StringUnknown()
+	state := lifecycleState(t, prior)
+	plan := lifecycleState(t, planned)
+
+	setVersionCalled := false
+	r := &distributionResource{client: wsl.NewClient(lifecycleRunner(func(args []string) (wsl.Result, error) {
+		switch args[0] {
+		case "--set-version":
+			setVersionCalled = true
+			return wsl.Result{}, nil
+		case "--list":
+			return wsl.Result{Stdout: []byte("Access is denied."), ExitCode: 1}, errors.New("read failed")
+		default:
+			t.Fatalf("unexpected command: %v", args)
+		}
+		return wsl.Result{}, nil
+	}))}
+	resp := resource.UpdateResponse{State: state}
+	r.Update(context.Background(), resource.UpdateRequest{State: state, Plan: tfsdk.Plan{Raw: plan.Raw, Schema: plan.Schema}}, &resp)
+
+	if !setVersionCalled || !resp.Diagnostics.HasError() {
+		t.Fatalf("setVersionCalled = %v, diagnostics = %v", setVersionCalled, resp.Diagnostics)
+	}
+	got := lifecycleModel(t, resp.State)
+	want := prior
+	want.Version = types.Int64Value(2) // already applied via SetVersion; must not be lost
+	want.State = types.StringNull()    // unobserved after the failed refresh
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("state = %#v, want %#v", got, want)
+	}
+}
+
 func TestDistributionResource_CreatePreservesStateOnReadFailure(t *testing.T) {
 	for _, mode := range []string{"install", "import"} {
 		for _, version := range []types.Int64{types.Int64Unknown(), types.Int64Value(2)} {

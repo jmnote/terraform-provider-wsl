@@ -76,7 +76,7 @@ func (r *distributionResource) Schema(_ context.Context, _ resource.SchemaReques
 					"passed to `wsl --install`); set it explicitly there to register the distribution under " +
 					"a different name than its Store identifier.",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
+					nameDefaultsToDistributionUnlessChanged(),
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
@@ -333,11 +333,14 @@ func (r *distributionResource) Update(ctx context.Context, req resource.UpdateRe
 		}
 	}
 
-	resp.Diagnostics.Append(r.refresh(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
+	// Preserve the version change applied above even if the following
+	// refresh fails. Unobserved computed values must be null, not unknown,
+	// in partial state.
+	if plan.State.IsUnknown() {
+		plan.State = types.StringNull()
 	}
 
+	resp.Diagnostics.Append(r.refresh(ctx, &plan)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 

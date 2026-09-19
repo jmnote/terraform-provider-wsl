@@ -294,7 +294,7 @@ func TestClient_Create_InstallMode_PassesNameWhenDifferent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	want := []string{"--install", "Ubuntu-24.04", "--no-launch", "--name", "worker"}
+	want := []string{"--install", "Ubuntu-24.04", "--name", "worker", "--no-launch"}
 	got := runner.calls[0]
 	if len(got) != len(want) {
 		t.Fatalf("args = %v, want %v", got, want)
