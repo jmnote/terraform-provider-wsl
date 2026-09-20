@@ -13,7 +13,7 @@ import (
 // otherwise) and additionally require a real Windows host with WSL
 // installed, since -- unlike internal/wsl's unit tests -- they exercise
 // the actual provider binary talking to the actual wsl.exe. See
-// README.md, "Acceptance tests".
+// CONTRIBUTING.md, "Acceptance tests".
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
 	"wsl": providerserver.NewProtocol6WithError(New("acctest")()),
 }

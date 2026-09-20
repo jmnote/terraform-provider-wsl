@@ -40,6 +40,6 @@ jobs:
 
       # Unit tests only: acceptance tests (TF_ACC=1) create and destroy
       # real WSL distributions and are intentionally not run in CI. See
-      # README.md, "Acceptance tests".
+      # CONTRIBUTING.md, "Acceptance tests".
       - name: go test
         run: go test ./... -v

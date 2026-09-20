@@ -2,7 +2,8 @@
 //
 // Run `go generate ./...` to refresh the generated documentation under
 // docs/ after changing any schema (requires
-// github.com/hashicorp/terraform-plugin-docs' tfplugindocs; see README.md).
+// github.com/hashicorp/terraform-plugin-docs' tfplugindocs; see
+// CONTRIBUTING.md).
 //
 //go:generate go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate
 package main

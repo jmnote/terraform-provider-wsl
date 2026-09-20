@@ -35,7 +35,7 @@ function Invoke-Generate { go generate ./... }
 
 function Invoke-TestAcc {
     # Acceptance tests create and destroy real WSL distributions; see
-    # README.md, "Acceptance tests", for the WSL_ACC_TEST_DISTRIBUTION /
+    # CONTRIBUTING.md, "Acceptance tests", for the WSL_ACC_TEST_DISTRIBUTION /
     # WSL_ACC_TEST_ROOTFS environment variables each one additionally
     # needs. Neither runs unless one of those is also set.
     $env:TF_ACC = '1'
