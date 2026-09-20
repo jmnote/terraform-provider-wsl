@@ -1,6 +1,6 @@
 # Support Both Install and Import Creation Modes
 
-**Summary:** `wsl_distribution` supports two mutually exclusive creation modes -- installing a Microsoft Store distribution with no tar file (`wsl --install`) and importing your own root filesystem tar or `.wsl` file (`wsl --import`) -- with an optional custom `name` available in both.
+**Summary:** `wsl_instance` supports two mutually exclusive creation modes -- installing a Microsoft Store distribution with no tar file (`wsl --install`) and importing your own root filesystem tar or `.wsl` file (`wsl --import`) -- with a required `name` in both.
 
 ---
 
@@ -47,12 +47,12 @@ out to be supportable, each with the constraints described below.
 
 ## Decision
 
-`wsl_distribution` supports **two mutually exclusive creation modes** in
+`wsl_instance` supports **two mutually exclusive creation modes** in
 the same resource, selected by which arguments are set:
 
 - **Install mode** (`distribution`): `wsl --install <Distribution>
   --no-launch`, the exact primitive `wsl --install <Distribution>` uses
-  day to day. No tar file needed, and no other registered distribution on
+  day to day. No tar file needed, and no other registered instance on
   the host is read or touched.
 - **Import mode** (`rootfs` + `location`): `wsl --import`. Bring your own
   root filesystem tar/tar.gz -- a `.wsl` file (a tar archive with a `.wsl`
@@ -61,47 +61,18 @@ the same resource, selected by which arguments are set:
   `wsl --import <Name> <Location> <file>.wsl`, so no separate attribute
   for it is needed.
 
-`name` is optional in both modes. In install mode, an omitted `name`
-defaults to `distribution` (wsl.exe's own default when `--name` is not
-passed); setting it explicitly registers the distribution under a
-different name than its Store identifier, which lets multiple instances
-of the same Store distribution coexist under different names. In import
-mode, `name` has no such default (there's nothing to default it to) and
-must be set explicitly.
+`name` is required explicitly in both modes -- see
+[required-name.md](required-name.md) for why install mode does not default
+it to `distribution` the way `wsl.exe` itself does when `--name` is
+omitted. Setting a `name` different from `distribution` in install mode
+registers the distribution under that different name, which lets multiple
+instances of the same Store distribution coexist under different names.
 
 `wsl --install` also has no per-invocation `--version` flag (unlike
 `--import`), so install mode applies a requested `version` with a
 follow-up `wsl --set-version` call after install completes, rather than
 leaving it to the host's mutable `wsl --set-default-version` setting.
 
-## Consequences
-
-- The schema needs mutual-exclusion validation between `distribution` and
-  `rootfs`+`location` (`ValidateConfig` at plan time, `internal/wsl/client.go`
-  at apply time as a backstop), plus a check that `name` is set in import
-  mode specifically (no default there).
-- Because `name` can now be Computed (defaulted from `distribution`), the
-  resource's `Create` must resolve it to a known value itself before
-  returning state -- Terraform requires every attribute to be known after
-  apply, and `Read`/`refresh` needs a concrete name to look the
-  distribution up by regardless of which mode set it.
-- Install mode depends on Microsoft Store/network access at apply time,
-  which is outside this provider's control and can make `terraform apply`
-  less deterministic than import mode; see the "Known limitations" section
-  of docs/index.md.
-- Applying a requested `version` in install mode is two wsl.exe calls, not
-  one (`wsl --install` then `wsl --set-version`), so `Create` can fail
-  between them: the distribution now exists but not at the requested
-  version. `createInstall` treats this as all-or-nothing and rolls the
-  distribution back (`wsl --unregister`) rather than leaving an orphan
-  invisible to Terraform state; see `internal/wsl/client.go`.
-- Terraform runs multiple resources' CRUD concurrently. `internal/wsl`'s
-  `client` serializes state-mutating calls (`Create`, `SetVersion`,
-  `Delete`) and excludes concurrent `List`/`Get` snapshots with an
-  `RWMutex`, since WSL's distribution registration internals are not
-  documented as safe for concurrent registration/unregistration or
-  read-during-write access. Independent read snapshots may still run in
-  parallel.
-- See [Observable State vs. Creation-Time Attributes](observable-state.md)
-  for how the resource handles that neither mode's creation-time inputs
-  are recoverable via `Read`.
+See [Observable State vs. Creation-Time Attributes](observable-state.md)
+for how the resource handles that neither mode's creation-time inputs are
+recoverable via `Read`.

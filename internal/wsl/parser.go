@@ -21,7 +21,7 @@ var columnGap = regexp.MustCompile(`\s{2,}`)
 // wsl.exe's `--list --verbose` output is a fixed-width, human-oriented
 // table intended for a terminal, not a machine-readable format (there is no
 // current wsl.exe option for that; see
-// docs/design-decisions/locale-independent-parsing.md). Two details make
+// docs/design/decisions/locale-independent-parsing.md). Two details make
 // naive parsing unsafe:
 //
 //  1. The header row ("NAME STATE VERSION") is localized on non-English

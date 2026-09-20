@@ -22,8 +22,8 @@ import (
 var _ provider.Provider = &WSLProvider{}
 
 // WSLProvider is the jmnote/wsl Terraform provider. It manages the
-// lifecycle of WSL distributions on the local Windows host that runs
-// Terraform; see docs/design-decisions/platform-support.md for the
+// lifecycle of WSL instances on the local Windows host that runs
+// Terraform; see docs/design/decisions/platform-support.md for the
 // execution model this implies and its v0.1.0 scope.
 type WSLProvider struct {
 	// version is set by main.go via goreleaser at build time (or "dev"
@@ -50,9 +50,9 @@ func (p *WSLProvider) Metadata(_ context.Context, _ provider.MetadataRequest, re
 
 func (p *WSLProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages the lifecycle of Windows Subsystem for Linux (WSL) distributions. " +
+		Description: "Manages the lifecycle of Windows Subsystem for Linux (WSL) instances. " +
 			"This provider must run as part of Terraform executing on a Windows host with WSL available; " +
-			"it does not manage anything inside a distribution (no packages, files, or services).",
+			"it does not manage anything inside an instance (no packages, files, or services).",
 		Attributes: map[string]schema.Attribute{
 			"executable": schema.StringAttribute{
 				Optional: true,
@@ -93,12 +93,12 @@ func (p *WSLProvider) Configure(ctx context.Context, req provider.ConfigureReque
 
 func (p *WSLProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		NewDistributionResource,
+		NewInstanceResource,
 	}
 }
 
 func (p *WSLProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewDistributionDataSource,
+		NewInstanceDataSource,
 	}
 }

@@ -1,7 +1,7 @@
 # Proposal: Image Cache Policy and Digest Pinning (not accepted)
 
 **Status:** Proposed, not implemented. This is a discussion record, not a
-design decision -- unlike `docs/design-decisions/`, nothing here is
+design decision -- unlike `docs/design/decisions/`, nothing here is
 shipped in v0.1.0. Kept separate from that directory for exactly that
 reason: it should not read as settled.
 
@@ -56,7 +56,7 @@ option on install mode"; it moves the provider's responsibility boundary
 from *a thin, declarative wrapper around wsl.exe* to *an image
 downloader/cache with a thin wrapper on top*, which is a materially
 different (and materially larger) thing to build and maintain than what
-`docs/design-decisions/` describes as this provider's scope.
+`docs/design/decisions/` describes as this provider's scope.
 
 ## What actually shipped instead
 
@@ -69,7 +69,7 @@ file: a genuine ArchLinux `.wsl` download was fed straight to
 `wsl --import <Name> <Location> <file>.wsl` and registered correctly with
 no errors. So a user who wants full control over exactly which image
 bytes get used already has it, today, via `rootfs` -- no `image` attribute
-needed. See `docs/design-decisions/creation-model.md` and the resource
+needed. See `docs/design/decisions/creation-model.md` and the resource
 docs' "Import mode" section.
 
 ## Open questions, if this is revisited

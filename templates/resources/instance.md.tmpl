@@ -12,7 +12,7 @@ description: |-
 
 ### Install mode (Microsoft Store distribution, no tar needed)
 
-{{tffile "examples/resources/wsl_distribution/resource.tf"}}
+{{tffile "examples/resources/wsl_instance/resource.tf"}}
 
 Valid values for `distribution` come from WSL's own distribution catalog
 (`wsl --list --online`, backed by
@@ -22,13 +22,13 @@ floats to whichever entry that flavor's catalog currently marks
 `Default: true`; a specific entry name like `"Ubuntu-24.04"` pins to that
 one.
 
-### Install mode with a custom name
+### Multiple instances from the same distribution
 
-{{tffile "examples/resources/wsl_distribution/resource_install_custom_name.tf"}}
+{{tffile "examples/resources/wsl_instance/resource_install_custom_name.tf"}}
 
 ### Import mode (bring your own rootfs tar, or a `.wsl` file)
 
-{{tffile "examples/resources/wsl_distribution/resource_import.tf"}}
+{{tffile "examples/resources/wsl_instance/resource_import.tf"}}
 
 A `.wsl` file (the packaging format `wsl --install --from-file` and the
 Microsoft Store both use -- it's a tar archive with a `.wsl` extension;
@@ -40,13 +40,13 @@ works as `rootfs` here too: `wsl --import` accepts it exactly like a plain
 
 ## Import
 
-Import uses the distribution's registration name as the entire import ID:
+Import uses the instance's registration name as the entire import ID:
 
 {{codefile "shell" .ImportFile}}
 
 Because WSL exposes no way to read back the original `distribution`,
 `rootfs`, or `location`, those attributes are left unset by import. Write
 matching values into your configuration before the next `terraform plan`;
-see [design-decisions/observable-state.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design-decisions/observable-state.md)
+see [design/decisions/observable-state.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design/decisions/observable-state.md)
 for why, and how the schema avoids proposing a destructive replace on that
 first plan.

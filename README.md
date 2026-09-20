@@ -1,7 +1,7 @@
 # Terraform Provider for WSL
 
 The [Terraform WSL provider](https://registry.terraform.io/providers/jmnote/wsl/latest) enables [Terraform](https://www.terraform.io) to manage the lifecycle of Windows
-Subsystem for Linux (WSL) distribution registrations on a Windows host.
+Subsystem for Linux (WSL) instance registrations on a Windows host.
 
 ## Quick Starts
 

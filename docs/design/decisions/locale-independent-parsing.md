@@ -33,16 +33,3 @@ text:
   "Running"; existence and identity checks use the presence of a row for
   the requested name, never state text.
 
-## Consequences
-
-- Parsing is robust to Windows display language, including the empty-registry
-  case. When `wsl --list --verbose` fails, the client performs a fallback
-  `wsl --list --quiet`: a successful empty response confirms an empty registry
-  without matching localized text. If that fallback fails or reports names,
-  the original verbose error is preserved, so service/access failures cannot
-  silently remove resources from Terraform state.
-- The normal list path remains a single `wsl.exe` invocation; the quiet
-  fallback is used only after a verbose failure.
-- Any future change to `internal/wsl/parser.go` must preserve the
-  "columns split on 2+ spaces, last field is the locale-invariant anchor"
-  approach rather than reintroducing literal English text matching.

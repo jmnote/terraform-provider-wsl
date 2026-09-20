@@ -278,7 +278,8 @@ func TestClient_Create_ValidatesRequiredFields(t *testing.T) {
 	c := NewClient(&fakeRunner{})
 
 	cases := []CreateOptions{
-		{Rootfs: "r.tar", Location: `C:\loc`}, // missing name
+		{Rootfs: "r.tar", Location: `C:\loc`}, // missing name (import mode)
+		{Distribution: "Ubuntu"},              // missing name (install mode)
 		{Name: "n", Location: `C:\loc`},       // missing rootfs
 		{Name: "n", Rootfs: "r.tar"},          // missing location
 		{Name: "n"},                           // neither mode set
@@ -373,7 +374,7 @@ func TestClient_Create_InstallMode_RollsBackOnSetVersionFailure(t *testing.T) {
 // custom registration name in install mode: --name is included whenever it
 // differs from --distribution. Confirmed working against a real install
 // (`wsl --install ArchLinux --name <custom> --no-launch`); see
-// docs/design-decisions/creation-model.md.
+// docs/design/decisions/creation-model.md.
 func TestClient_Create_InstallMode_PassesNameWhenDifferent(t *testing.T) {
 	runner := &fakeRunner{fn: func(args []string) (Result, error) { return Result{}, nil }}
 	c := NewClient(runner)

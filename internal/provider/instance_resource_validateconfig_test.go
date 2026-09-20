@@ -10,7 +10,7 @@ import (
 )
 
 // configValues builds a resource.ValidateConfigRequest for
-// distributionResource, without needing a real Terraform run. Each of
+// instanceResource, without needing a real Terraform run. Each of
 // name/distribution/rootfs/location may be a string (a known value), nil
 // (explicitly null/unset), or the sentinel unknownValue (references
 // something not yet known, e.g. another resource's computed output).
@@ -21,7 +21,7 @@ var unknownValue = configValue(struct{}{})
 func newValidateConfigRequest(t *testing.T, name, distribution, rootfs, location configValue) resource.ValidateConfigRequest {
 	t.Helper()
 
-	r := &distributionResource{}
+	r := &instanceResource{}
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
@@ -53,16 +53,26 @@ func newValidateConfigRequest(t *testing.T, name, distribution, rootfs, location
 	}
 }
 
-func TestDistributionResource_ValidateConfig(t *testing.T) {
+func TestInstanceResource_ValidateConfig(t *testing.T) {
 	cases := []struct {
 		name                                    string
 		cfgName, distribution, rootfs, location configValue
 		wantError                               bool
 	}{
 		{
-			name:         "install mode, name omitted: valid",
+			// Required in the schema only rejects a missing name; it does
+			// not reject an explicitly null or empty one (both of which a
+			// unit test can still construct by bypassing Terraform Core),
+			// so ValidateConfig has its own check for that.
+			name:         "install mode, name omitted: caught explicitly",
 			distribution: "Ubuntu-24.04",
-			wantError:    false,
+			wantError:    true,
+		},
+		{
+			name:         "install mode, name empty string: caught explicitly",
+			cfgName:      "",
+			distribution: "Ubuntu-24.04",
+			wantError:    true,
 		},
 		{
 			name:         "install mode, custom name: valid",
@@ -95,16 +105,11 @@ func TestDistributionResource_ValidateConfig(t *testing.T) {
 			wantError: true,
 		},
 		{
-			name:      "missing name in import mode",
-			rootfs:    "C:\\r.tar",
-			location:  "C:\\loc",
-			wantError: true,
-		},
-		{
 			// Guards the fix: an Unknown distribution (e.g. referencing
 			// another resource's computed output) must not be treated as
 			// "absent" and trigger a false "missing creation mode" error.
 			name:         "unknown distribution defers validation",
+			cfgName:      "worker",
 			distribution: unknownValue,
 			wantError:    false,
 		},
@@ -130,7 +135,7 @@ func TestDistributionResource_ValidateConfig(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &distributionResource{}
+			r := &instanceResource{}
 			req := newValidateConfigRequest(t, tc.cfgName, tc.distribution, tc.rootfs, tc.location)
 			var resp resource.ValidateConfigResponse
 

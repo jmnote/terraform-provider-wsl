@@ -6,6 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
+	"sync"
+
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // Result is the outcome of running a wsl.exe invocation.
@@ -46,12 +50,53 @@ func NewProcessRunner(executable string) *ProcessRunner {
 // give a diagnostic pointing at WSL setup rather than a raw OS error.
 var ErrExecutableNotFound = errors.New("wsl: executable not found")
 
+// progressScanWindow bounds how much of a still-running command's captured
+// output logProgress re-decodes and re-scans per write; see its use in Run.
+const progressScanWindow = 4096
+
 func (r *ProcessRunner) Run(ctx context.Context, args ...string) (Result, error) {
 	cmd := exec.CommandContext(ctx, r.Executable, args...)
 
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+
+	// wsl.exe reports long-running operations (e.g. `--install`'s download
+	// and install phases) as a sequence of lines it rewrites in place with
+	// carriage returns, like a progress bar -- normally only visible on a
+	// real console, and otherwise invisible since Result is only inspected
+	// by the caller after the whole command finishes. progressLogger mirrors
+	// each write into tflog as it arrives, so `TF_LOG=DEBUG` surfaces that
+	// same progress instead of a multi-minute silence.
+	var progressMu sync.Mutex
+	lastLogged := ""
+	logProgress := func(buf *bytes.Buffer) {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		// Only re-decode/re-scan a bounded trailing window of the buffer,
+		// not everything accumulated so far: a real install can emit
+		// thousands of small progress-bar rewrites, and wsl.exe's
+		// progress/status lines are always far shorter than
+		// progressScanWindow, so the line this is looking for is always
+		// well within it. Without this bound, each write would cost
+		// O(current buffer size), making the whole command O(n^2).
+		b := buf.Bytes()
+		if start := len(b) - progressScanWindow; start > 0 {
+			// Round down to an even offset: UTF-16LE (the encoding
+			// decodeOutput may detect) uses 2-byte code units, so any even
+			// byte offset is guaranteed to fall on a code-unit boundary.
+			b = b[start-start%2:]
+		}
+		// decodeOutput is safe to call on a still-growing (and therefore
+		// possibly mid-character) buffer: it already has to tolerate a
+		// truncated tail for the context-cancellation case below.
+		line := lastVisibleLine(decodeOutput(b))
+		if line == "" || line == lastLogged {
+			return
+		}
+		lastLogged = line
+		tflog.Debug(ctx, "wsl: progress", map[string]interface{}{"line": line})
+	}
+	cmd.Stdout = &progressWriter{buf: &stdout, onWrite: func() { logProgress(&stdout) }}
+	cmd.Stderr = &progressWriter{buf: &stderr, onWrite: func() { logProgress(&stderr) }}
 
 	err := cmd.Run()
 
@@ -82,4 +127,36 @@ func (r *ProcessRunner) Run(ctx context.Context, args ...string) (Result, error)
 
 	// context.Canceled / context.DeadlineExceeded surface here.
 	return result, fmt.Errorf("wsl: %s %v: %w", r.Executable, args, err)
+}
+
+// progressWriter mirrors every write into buf (preserving the existing
+// full-capture behavior Result relies on) and additionally invokes onWrite
+// after each one, so a caller can observe the output as it streams in
+// rather than only once the command exits.
+type progressWriter struct {
+	buf     *bytes.Buffer
+	onWrite func()
+}
+
+func (w *progressWriter) Write(p []byte) (int, error) {
+	n, err := w.buf.Write(p)
+	if w.onWrite != nil {
+		w.onWrite()
+	}
+	return n, err
+}
+
+// lastVisibleLine returns the last non-blank line in s, treating both "\n"
+// and a bare "\r" as line separators. wsl.exe rewrites progress-bar lines in
+// place with a bare "\r" (no "\n"), so splitting on "\n" alone would see the
+// whole run as a single line and never report an updated percentage.
+func lastVisibleLine(s string) string {
+	s = strings.ReplaceAll(s, "\r", "\n")
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
 }
