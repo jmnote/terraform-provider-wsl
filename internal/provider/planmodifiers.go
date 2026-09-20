@@ -98,7 +98,7 @@ func (m nameDefaultsToDistributionUnlessChangedModifier) PlanModifyString(ctx co
 		// import: state.distribution is null, so comparing state and config
 		// distributions would otherwise leave name unknown and the following
 		// RequiresReplace modifier would incorrectly force replacement.
-		resp.PlanValue = types.StringValue(configDistribution.ValueString())
+		resp.PlanValue = types.StringValue(defaultNameForDistribution(configDistribution.ValueString()))
 		return
 	}
 

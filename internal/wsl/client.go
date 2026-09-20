@@ -79,6 +79,16 @@ func (c *client) list(ctx context.Context) ([]Distribution, error) {
 		// empty registry succeeds with empty output. Use it only as a fallback
 		// after verbose failure, so normal list operations remain one process
 		// invocation and service/access failures are not swallowed.
+		//
+		// This fallback is fail-closed: if the quiet call also fails, or
+		// returns non-empty output, list returns the original verbose error
+		// rather than guessing the registry is empty. Older WSL versions or
+		// non-English locales where `--list --quiet` might also fail or print
+		// a localized message fall into that same fail-closed path instead of
+		// being auto-handled here, since a false positive would delete
+		// Terraform state for a distribution that still exists. Extend this
+		// only with real Windows acceptance-test evidence of such a WSL
+		// version/locale combination.
 		quietResult, quietErr := c.runner.Run(ctx, "--list", "--quiet")
 		if quietErr == nil && strings.TrimSpace(decodeOutput(quietResult.Stdout)) == "" {
 			return nil, nil
