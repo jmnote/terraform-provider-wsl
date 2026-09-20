@@ -1,7 +1,6 @@
 # Terraform Provider for WSL
 
-The Terraform WSL provider is a plugin that allows
-[Terraform](https://www.terraform.io) to manage the lifecycle of Windows
+The [Terraform WSL provider](https://registry.terraform.io/providers/jmnote/wsl/latest) enables [Terraform](https://www.terraform.io) to manage the lifecycle of Windows
 Subsystem for Linux (WSL) distribution registrations on a Windows host.
 
 ## Quick Starts
