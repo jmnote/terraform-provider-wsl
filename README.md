@@ -6,12 +6,12 @@ Subsystem for Linux (WSL) distribution registrations on a Windows host.
 
 ## Quick Starts
 
-- [Getting Started with the WSL Provider](docs/guides/getting-started.md)
-- [Provider Documentation](docs/index.md)
+- [Getting Started with the WSL Provider](https://registry.terraform.io/providers/jmnote/wsl/latest/docs/guides/getting-started)
+- [Provider Documentation](https://registry.terraform.io/providers/jmnote/wsl/latest/docs)
 
 ## Provider Usage
 
-Please see the [provider documentation](docs/index.md) for requirements,
+Please see the [provider documentation](https://registry.terraform.io/providers/jmnote/wsl/latest/docs) for requirements,
 configuration, and resource reference.
 
 ### Upgrading the provider
