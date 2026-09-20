@@ -206,6 +206,17 @@ func isKnownNonEmpty(v types.String) bool {
 	return !v.IsNull() && !v.IsUnknown() && v.ValueString() != ""
 }
 
+// defaultNameForDistribution computes the install-mode default for an
+// omitted name: it defaults to distribution, matching wsl.exe's own default
+// when --name is not passed to `wsl --install` (confirmed against a real
+// install; see docs/design-decisions/creation-model.md). Both
+// nameDefaultsToDistributionUnlessChangedModifier.PlanModifyString
+// (planmodifiers.go) and Create call this so `terraform plan`'s displayed
+// name can never diverge from what `terraform apply` actually registers.
+func defaultNameForDistribution(distribution string) string {
+	return distribution
+}
+
 func (r *distributionResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan distributionResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -219,13 +230,13 @@ func (r *distributionResource) Create(ctx context.Context, req resource.CreateRe
 		Rootfs:       plan.Rootfs.ValueString(),
 		Location:     plan.Location.ValueString(),
 	}
-	// In install mode, an omitted name defaults to distribution, matching
-	// wsl.exe's own default when --name is not passed to `wsl --install`
-	// (confirmed against a real install; see
-	// docs/design-decisions/creation-model.md). ValidateConfig already
-	// guarantees name is set in import mode.
+	// ValidateConfig already guarantees name is set in import mode; this
+	// backstop covers install mode, where distribution can still be Unknown
+	// at plan time (see nameDefaultsToDistributionUnlessChangedModifier in
+	// planmodifiers.go, which handles the common case once distribution is
+	// known at plan time).
 	if isKnownNonEmpty(plan.Distribution) && !isKnownNonEmpty(plan.Name) {
-		opts.Name = plan.Distribution.ValueString()
+		opts.Name = defaultNameForDistribution(plan.Distribution.ValueString())
 	}
 	if !plan.Version.IsUnknown() && !plan.Version.IsNull() {
 		opts.Version = int(plan.Version.ValueInt64())
