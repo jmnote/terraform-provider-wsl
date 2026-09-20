@@ -11,7 +11,7 @@ permissions:
 jobs:
   test:
     # This provider only builds/runs on Windows (see
-    # docs/design-decisions/platform-support.md), so CI runs on a Windows
+    # docs/design/decisions/platform-support.md), so CI runs on a Windows
     # runner rather than the more common ubuntu-latest.
     runs-on: windows-latest
     steps:
@@ -39,7 +39,7 @@ jobs:
         run: go build ./...
 
       # Unit tests only: acceptance tests (TF_ACC=1) create and destroy
-      # real WSL distributions and are intentionally not run in CI. See
+      # real WSL instances and are intentionally not run in CI. See
       # CONTRIBUTING.md, "Acceptance tests".
       - name: go test
         run: go test ./... -v

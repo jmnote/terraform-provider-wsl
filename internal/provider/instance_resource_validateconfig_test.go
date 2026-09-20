@@ -10,7 +10,7 @@ import (
 )
 
 // configValues builds a resource.ValidateConfigRequest for
-// distributionResource, without needing a real Terraform run. Each of
+// instanceResource, without needing a real Terraform run. Each of
 // name/distribution/rootfs/location may be a string (a known value), nil
 // (explicitly null/unset), or the sentinel unknownValue (references
 // something not yet known, e.g. another resource's computed output).
@@ -21,7 +21,7 @@ var unknownValue = configValue(struct{}{})
 func newValidateConfigRequest(t *testing.T, name, distribution, rootfs, location configValue) resource.ValidateConfigRequest {
 	t.Helper()
 
-	r := &distributionResource{}
+	r := &instanceResource{}
 	var schemaResp resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 
@@ -53,14 +53,18 @@ func newValidateConfigRequest(t *testing.T, name, distribution, rootfs, location
 	}
 }
 
-func TestDistributionResource_ValidateConfig(t *testing.T) {
+func TestInstanceResource_ValidateConfig(t *testing.T) {
 	cases := []struct {
 		name                                    string
 		cfgName, distribution, rootfs, location configValue
 		wantError                               bool
 	}{
 		{
-			name:         "install mode, name omitted: valid",
+			// ValidateConfig itself has no name-presence check: name is
+			// Required in the schema, so Terraform Core rejects a missing
+			// one before ValidateConfig ever runs in real usage. This case
+			// only confirms mode validation does not also demand a name.
+			name:         "install mode, name omitted: mode validation alone does not error",
 			distribution: "Ubuntu-24.04",
 			wantError:    false,
 		},
@@ -95,12 +99,6 @@ func TestDistributionResource_ValidateConfig(t *testing.T) {
 			wantError: true,
 		},
 		{
-			name:      "missing name in import mode",
-			rootfs:    "C:\\r.tar",
-			location:  "C:\\loc",
-			wantError: true,
-		},
-		{
 			// Guards the fix: an Unknown distribution (e.g. referencing
 			// another resource's computed output) must not be treated as
 			// "absent" and trigger a false "missing creation mode" error.
@@ -130,7 +128,7 @@ func TestDistributionResource_ValidateConfig(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &distributionResource{}
+			r := &instanceResource{}
 			req := newValidateConfigRequest(t, tc.cfgName, tc.distribution, tc.rootfs, tc.location)
 			var resp resource.ValidateConfigResponse
 

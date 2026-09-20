@@ -12,43 +12,43 @@ import (
 )
 
 var (
-	_ datasource.DataSource              = &distributionDataSource{}
-	_ datasource.DataSourceWithConfigure = &distributionDataSource{}
+	_ datasource.DataSource              = &instanceDataSource{}
+	_ datasource.DataSourceWithConfigure = &instanceDataSource{}
 )
 
-func NewDistributionDataSource() datasource.DataSource {
-	return &distributionDataSource{}
+func NewInstanceDataSource() datasource.DataSource {
+	return &instanceDataSource{}
 }
 
-type distributionDataSource struct {
+type instanceDataSource struct {
 	client wsl.Client
 }
 
-type distributionDataSourceModel struct {
+type instanceDataSourceModel struct {
 	Name    types.String `tfsdk:"name"`
 	Version types.Int64  `tfsdk:"version"`
 	State   types.String `tfsdk:"state"`
 }
 
-func (d *distributionDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_distribution"
+func (d *instanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_instance"
 }
 
-func (d *distributionDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+func (d *instanceDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Looks up an existing WSL distribution registered on the host.",
+		Description: "Looks up an existing WSL instance registered on the host.",
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
 				Required:    true,
-				Description: "The distribution's registration name.",
+				Description: "The instance's registration name.",
 			},
 			"version": schema.Int64Attribute{
 				Computed:    true,
-				Description: "WSL engine version the distribution runs under: 1 or 2.",
+				Description: "WSL engine version the instance runs under: 1 or 2.",
 			},
 			"state": schema.StringAttribute{
 				Computed: true,
-				Description: "The distribution's current run state (e.g. \"Running\"/\"Stopped\") as " +
+				Description: "The instance's current run state (e.g. \"Running\"/\"Stopped\") as " +
 					"observed from `wsl --list --verbose`. Informational only: on a non-English Windows " +
 					"host this text is localized.",
 			},
@@ -56,7 +56,7 @@ func (d *distributionDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 	}
 }
 
-func (d *distributionDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+func (d *instanceDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -71,8 +71,8 @@ func (d *distributionDataSource) Configure(_ context.Context, req datasource.Con
 	d.client = client
 }
 
-func (d *distributionDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	var config distributionDataSourceModel
+func (d *instanceDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var config instanceDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -80,7 +80,7 @@ func (d *distributionDataSource) Read(ctx context.Context, req datasource.ReadRe
 
 	dist, err := d.client.Get(ctx, config.Name.ValueString())
 	if err != nil {
-		resp.Diagnostics.AddError("Error reading WSL distribution", err.Error())
+		resp.Diagnostics.AddError("Error reading WSL instance", err.Error())
 		return
 	}
 

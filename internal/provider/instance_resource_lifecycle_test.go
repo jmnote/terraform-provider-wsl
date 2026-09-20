@@ -19,10 +19,10 @@ func (f lifecycleRunner) Run(_ context.Context, args ...string) (wsl.Result, err
 	return f(args)
 }
 
-func lifecycleState(t *testing.T, model distributionResourceModel) tfsdk.State {
+func lifecycleState(t *testing.T, model instanceResourceModel) tfsdk.State {
 	t.Helper()
 	var schemaResp resource.SchemaResponse
-	(&distributionResource{}).Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
+	(&instanceResource{}).Schema(context.Background(), resource.SchemaRequest{}, &schemaResp)
 	state := tfsdk.State{Schema: schemaResp.Schema}
 	if diags := state.Set(context.Background(), &model); diags.HasError() {
 		t.Fatal(diags)
@@ -30,22 +30,22 @@ func lifecycleState(t *testing.T, model distributionResourceModel) tfsdk.State {
 	return state
 }
 
-func lifecycleModel(t *testing.T, state tfsdk.State) distributionResourceModel {
+func lifecycleModel(t *testing.T, state tfsdk.State) instanceResourceModel {
 	t.Helper()
 	if !state.Raw.IsFullyKnown() || state.Raw.IsNull() {
 		t.Fatalf("expected known, non-null state, got %s", state.Raw)
 	}
-	var model distributionResourceModel
+	var model instanceResourceModel
 	if diags := state.Get(context.Background(), &model); diags.HasError() {
 		t.Fatal(diags)
 	}
 	return model
 }
 
-func TestDistributionResource_UpdateResolvesCreationInputs(t *testing.T) {
+func TestInstanceResource_UpdateResolvesCreationInputs(t *testing.T) {
 	for _, mode := range []string{"install", "import", "adopt"} {
 		t.Run(mode, func(t *testing.T) {
-			prior := distributionResourceModel{
+			prior := instanceResourceModel{
 				Name: types.StringValue("worker"), Version: types.Int64Value(2), State: types.StringValue("Stopped"),
 			}
 			switch mode {
@@ -70,7 +70,7 @@ func TestDistributionResource_UpdateResolvesCreationInputs(t *testing.T) {
 			state := lifecycleState(t, prior)
 			plan := lifecycleState(t, planned)
 			var calls [][]string
-			r := &distributionResource{client: wsl.NewClient(lifecycleRunner(func(args []string) (wsl.Result, error) {
+			r := &instanceResource{client: wsl.NewClient(lifecycleRunner(func(args []string) (wsl.Result, error) {
 				calls = append(calls, args)
 				return wsl.Result{Stdout: []byte("  NAME  STATE  VERSION\n  worker  Stopped  1\n")}, nil
 			}))}
@@ -95,15 +95,15 @@ func TestDistributionResource_UpdateResolvesCreationInputs(t *testing.T) {
 	}
 }
 
-// TestDistributionResource_UpdatePreservesVersionOnRefreshFailure guards
+// TestInstanceResource_UpdatePreservesVersionOnRefreshFailure guards
 // against a real bug: Update applied a version change to the real WSL
-// distribution via SetVersion, but then discarded that change from state
+// instance via SetVersion, but then discarded that change from state
 // whenever the post-update refresh (used to also pick up the new "state"
 // field) failed, because terraform-plugin-framework falls back to the
 // prior state when Update returns without calling resp.State.Set. Update
 // must persist the already-applied version even when the refresh fails.
-func TestDistributionResource_UpdatePreservesVersionOnRefreshFailure(t *testing.T) {
-	prior := distributionResourceModel{
+func TestInstanceResource_UpdatePreservesVersionOnRefreshFailure(t *testing.T) {
+	prior := instanceResourceModel{
 		Name: types.StringValue("worker"), Distribution: types.StringValue("Ubuntu"),
 		Version: types.Int64Value(1), State: types.StringValue("Stopped"),
 	}
@@ -114,7 +114,7 @@ func TestDistributionResource_UpdatePreservesVersionOnRefreshFailure(t *testing.
 	plan := lifecycleState(t, planned)
 
 	setVersionCalled := false
-	r := &distributionResource{client: wsl.NewClient(lifecycleRunner(func(args []string) (wsl.Result, error) {
+	r := &instanceResource{client: wsl.NewClient(lifecycleRunner(func(args []string) (wsl.Result, error) {
 		switch args[0] {
 		case "--set-version":
 			setVersionCalled = true
@@ -141,24 +141,23 @@ func TestDistributionResource_UpdatePreservesVersionOnRefreshFailure(t *testing.
 	}
 }
 
-func TestDistributionResource_CreatePreservesStateOnReadFailure(t *testing.T) {
+func TestInstanceResource_CreatePreservesStateOnReadFailure(t *testing.T) {
 	for _, mode := range []string{"install", "import"} {
 		for _, version := range []types.Int64{types.Int64Unknown(), types.Int64Value(2)} {
 			t.Run(mode+version.String(), func(t *testing.T) {
-				planned := distributionResourceModel{
-					Name: types.StringUnknown(), Distribution: types.StringValue("Ubuntu"),
+				planned := instanceResourceModel{
+					Name: types.StringValue("worker"), Distribution: types.StringValue("Ubuntu"),
 					Rootfs: types.StringUnknown(), Location: types.StringUnknown(),
 					Version: version, State: types.StringUnknown(),
 				}
 				if mode == "import" {
-					planned.Name = types.StringValue("worker")
 					planned.Distribution = types.StringUnknown()
 					planned.Rootfs = types.StringValue("rootfs.tar")
 					planned.Location = types.StringValue(`C:\WSL\worker`)
 				}
 				plan := lifecycleState(t, planned)
 				created := false
-				r := &distributionResource{client: wsl.NewClient(lifecycleRunner(func(args []string) (wsl.Result, error) {
+				r := &instanceResource{client: wsl.NewClient(lifecycleRunner(func(args []string) (wsl.Result, error) {
 					switch args[0] {
 					case "--install", "--import":
 						created = true
@@ -182,7 +181,6 @@ func TestDistributionResource_CreatePreservesStateOnReadFailure(t *testing.T) {
 					want.Version = types.Int64Null()
 				}
 				if mode == "install" {
-					want.Name = types.StringValue("Ubuntu")
 					want.Rootfs, want.Location = types.StringNull(), types.StringNull()
 				} else {
 					want.Distribution = types.StringNull()
@@ -195,12 +193,12 @@ func TestDistributionResource_CreatePreservesStateOnReadFailure(t *testing.T) {
 	}
 }
 
-func TestDistributionResource_ReadPreservesStateOnListFailure(t *testing.T) {
-	state := lifecycleState(t, distributionResourceModel{
+func TestInstanceResource_ReadPreservesStateOnListFailure(t *testing.T) {
+	state := lifecycleState(t, instanceResourceModel{
 		Name: types.StringValue("worker"), Distribution: types.StringValue("Ubuntu"),
 		Version: types.Int64Value(2), State: types.StringValue("Stopped"),
 	})
-	r := &distributionResource{client: wsl.NewClient(lifecycleRunner(func(args []string) (wsl.Result, error) {
+	r := &instanceResource{client: wsl.NewClient(lifecycleRunner(func(args []string) (wsl.Result, error) {
 		return wsl.Result{Stdout: []byte("WSL service unavailable."), ExitCode: 1}, errors.New("read failed")
 	}))}
 	resp := resource.ReadResponse{State: state}

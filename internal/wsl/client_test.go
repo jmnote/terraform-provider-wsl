@@ -373,7 +373,7 @@ func TestClient_Create_InstallMode_RollsBackOnSetVersionFailure(t *testing.T) {
 // custom registration name in install mode: --name is included whenever it
 // differs from --distribution. Confirmed working against a real install
 // (`wsl --install ArchLinux --name <custom> --no-launch`); see
-// docs/design-decisions/creation-model.md.
+// docs/design/decisions/creation-model.md.
 func TestClient_Create_InstallMode_PassesNameWhenDifferent(t *testing.T) {
 	runner := &fakeRunner{fn: func(args []string) (Result, error) { return Result{}, nil }}
 	c := NewClient(runner)

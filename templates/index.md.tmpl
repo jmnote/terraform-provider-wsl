@@ -9,14 +9,26 @@ description: |-
 A Terraform provider for declaratively managing Windows Subsystem for Linux
 (WSL) distributions.
 
-This provider manages the **lifecycle of a WSL distribution's
+This provider manages the **lifecycle of a WSL instance's
 registration** on a Windows host -- creating it either by installing a
 Microsoft Store distribution (`wsl --install`) or by importing your own
 root filesystem tar (`wsl --import`), observing it, an in-place
 WSL-version update, and deleting it via `wsl --unregister`. It does
-**not** manage anything inside a distribution:
+**not** manage anything inside an instance:
 no packages, files, services, or arbitrary command execution. Use
 cloud-init, Ansible, or another configuration-management tool for that.
+
+## Terminology
+
+- **Instance**: a registered WSL installation -- what `wsl_instance`
+  creates, observes, updates, and destroys. WSL's own documentation and
+  `wsl.exe` commonly call this a "distribution" or "distro" instead.
+- **Distribution**: in this provider, specifically the Store catalog
+  identifier an instance is installed *from* (e.g. `"Ubuntu-24.04"`, the
+  `distribution` attribute) -- closer to what other systems call an image.
+  See
+  [design/decisions/instance-terminology.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design/decisions/instance-terminology.md)
+  for why this provider splits the two meanings WSL usually conflates.
 
 ## Requirements
 
@@ -45,7 +57,7 @@ terraform.exe
 
 Running Terraform inside WSL and calling out to
 `/mnt/c/Windows/System32/wsl.exe` is not supported in v0.1.0; see
-[docs/design-decisions/platform-support.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design-decisions/platform-support.md).
+[docs/design/decisions/platform-support.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design/decisions/platform-support.md).
 
 ## Example Usage
 
@@ -55,10 +67,10 @@ Running Terraform inside WSL and calling out to
 
 ## Resources
 
-- [`wsl_distribution`](resources/distribution.md) (resource): install/import,
-  observe, update, and delete a WSL distribution's registration.
-- [`wsl_distribution`](data-sources/distribution.md) (data source): look up
-  an existing WSL distribution.
+- [`wsl_instance`](resources/instance.md) (resource): install/import,
+  observe, update, and delete a WSL instance's registration.
+- [`wsl_instance`](data-sources/instance.md) (data source): look up
+  an existing WSL instance.
 
 ## Known limitations
 
@@ -70,17 +82,17 @@ Running Terraform inside WSL and calling out to
   [microsoft/WSL#6235](https://github.com/microsoft/WSL/issues/6235).
 - **No machine-readable WSL CLI output.** All state reconciliation is
   parsed from `wsl --list --verbose`'s human-oriented table; see
-  [design-decisions/locale-independent-parsing.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design-decisions/locale-independent-parsing.md)
+  [design/decisions/locale-independent-parsing.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design/decisions/locale-independent-parsing.md)
   for how that parsing stays locale-independent.
 - **Install mode needs Microsoft Store/network access** at apply time,
   which is outside this provider's control and can make `terraform apply`
   less deterministic than import mode; see
-  [design-decisions/creation-model.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design-decisions/creation-model.md).
+  [design/decisions/creation-model.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design/decisions/creation-model.md).
 
 ## Destructive operation warning
 
-`terraform destroy`, and any change to `wsl_distribution`'s `name`,
-`distribution`, `rootfs`, or `location`, unregisters the distribution via
+`terraform destroy`, and any change to `wsl_instance`'s `name`,
+`distribution`, `rootfs`, or `location`, unregisters the instance via
 `wsl --unregister`, which **permanently deletes its virtual disk and
 everything inside it**. This provider does not take backups or add any
 other safety net beyond what `terraform plan` already shows you.

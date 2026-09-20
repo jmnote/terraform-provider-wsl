@@ -1,12 +1,12 @@
 # Only WSL Version Supports an In-Place Update
 
-**Summary:** Every `wsl_distribution` attribute requires replacing the resource except `version`, which updates in place via `wsl --set-version`, matching what Microsoft documents as a supported (if slow) conversion between WSL 1 and 2.
+**Summary:** Every `wsl_instance` attribute requires replacing the resource except `version`, which updates in place via `wsl --set-version`, matching what Microsoft documents as a supported (if slow) conversion between WSL 1 and 2.
 
 ---
 
 ## Background
 
-Each `wsl_distribution` attribute needs a decision: does changing it
+Each `wsl_instance` attribute needs a decision: does changing it
 require destroying and recreating the resource (`RequiresReplace`), can it
 be updated in place, or is it purely observational (`Computed` only)? This
 has to follow real WSL semantics, not be assumed for convenience.
@@ -27,11 +27,3 @@ has to follow real WSL semantics, not be assumed for convenience.
 [Never Guess Creation-Time Attributes That WSL Cannot Report Back](observable-state.md))
 rather than the framework's plain `RequiresReplace`, so that adopting a
 value after `terraform import` does not itself trigger a replace.
-
-## Consequences
-
-- `version` is the only attribute with genuine in-place update behavior;
-  every other creation-time attribute change recreates the distribution.
-- Switching WSL versions can be slow (Microsoft's own documentation warns
-  about this for large distributions), but is still classified as Update
-  rather than Replace, since it is a supported, non-destructive operation.

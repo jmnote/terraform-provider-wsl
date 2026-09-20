@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // Client is the abstraction internal/provider programs against. The only
@@ -151,13 +153,14 @@ func (c *client) createInstall(ctx context.Context, opts CreateOptions) error {
 	// option on current wsl.exe (also confirmed against a real install);
 	// earlier research suggesting it was rejected for "legacy" Store
 	// distributions turned out to be outdated. See
-	// docs/design-decisions/creation-model.md.
+	// docs/design/decisions/creation-model.md.
 	args := []string{"--install", opts.Distribution}
 	if opts.Name != opts.Distribution {
 		args = append(args, "--name", opts.Name)
 	}
 	args = append(args, "--no-launch")
 
+	tflog.Debug(ctx, "wsl: running wsl.exe", map[string]interface{}{"args": args})
 	result, err := c.runner.Run(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("wsl: install %q: %w %s", opts.Distribution, err, describeOutput(result))
@@ -208,6 +211,7 @@ func (c *client) createImport(ctx context.Context, opts CreateOptions) error {
 		args = append(args, "--version", strconv.Itoa(opts.Version))
 	}
 
+	tflog.Debug(ctx, "wsl: running wsl.exe", map[string]interface{}{"args": args})
 	result, err := c.runner.Run(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("wsl: import %q: %w %s", opts.Name, err, describeOutput(result))
@@ -228,7 +232,9 @@ func (c *client) setVersion(ctx context.Context, name string, version int) error
 		return fmt.Errorf("wsl: set-version: version must be 1 or 2, got %d", version)
 	}
 
-	result, err := c.runner.Run(ctx, "--set-version", name, strconv.Itoa(version))
+	args := []string{"--set-version", name, strconv.Itoa(version)}
+	tflog.Debug(ctx, "wsl: running wsl.exe", map[string]interface{}{"args": args})
+	result, err := c.runner.Run(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("wsl: set-version %q to %d: %w %s", name, version, err, describeOutput(result))
 	}
@@ -256,7 +262,9 @@ func (c *client) Delete(ctx context.Context, name string) error {
 // unregister runs `wsl --unregister name` without locking c.mu, for use by
 // callers (Delete, createInstall's rollback) that already hold it.
 func (c *client) unregister(ctx context.Context, name string) error {
-	result, err := c.runner.Run(ctx, "--unregister", name)
+	args := []string{"--unregister", name}
+	tflog.Debug(ctx, "wsl: running wsl.exe", map[string]interface{}{"args": args})
+	result, err := c.runner.Run(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("wsl: unregister %q: %w %s", name, err, describeOutput(result))
 	}

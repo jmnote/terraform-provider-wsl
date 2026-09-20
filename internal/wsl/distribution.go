@@ -27,7 +27,7 @@ type Distribution struct {
 
 // CreateOptions describes a new distribution to register, using exactly one
 // of two mutually exclusive creation modes -- see
-// docs/design-decisions/creation-model.md for why both are supported and
+// docs/design/decisions/creation-model.md for why both are supported and
 // how they differ:
 //
 //   - Install mode (Distribution set): `wsl --install <Distribution>`, the
@@ -42,11 +42,10 @@ type Distribution struct {
 //     Microsoft's own custom-distro tooling produces -- works here too).
 //     Supports an arbitrary Name.
 type CreateOptions struct {
-	// Name is the distribution's registration name. Required in import
-	// mode. Optional in install mode: when empty, the caller is expected
-	// to have already resolved it to Distribution (see
-	// internal/provider/distribution_resource.go's Create), since this
-	// package itself never guesses at Terraform-facing defaults.
+	// Name is the distribution's registration name. Required in both
+	// modes; this package itself never guesses at Terraform-facing
+	// defaults, so callers must always supply it explicitly (see
+	// internal/provider/instance_resource.go's Create).
 	Name string
 
 	// Distribution is a Microsoft Store distribution identifier (e.g.

@@ -50,6 +50,36 @@ func TestProcessRunner_ExecutableNotFound(t *testing.T) {
 	}
 }
 
+func TestLastVisibleLine(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"single line", "hello", "hello"},
+		{"trailing newline", "hello\n", "hello"},
+		{
+			name: "progress bar rewritten with bare CR",
+			in:   "Downloading: Debian GNU/Linux\r[==========50.0%          ]\r[==================100.0%]",
+			want: "[==================100.0%]",
+		},
+		{
+			name: "CRLF terminated lines",
+			in:   "step one\r\nstep two\r\n",
+			want: "step two",
+		},
+		{"blank after last content", "done\r\n\r\n", "done"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := lastVisibleLine(tt.in); got != tt.want {
+				t.Errorf("lastVisibleLine(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestProcessRunner_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
