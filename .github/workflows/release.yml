@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: |
           if [ -z "$GPG_PRIVATE_KEY" ]; then
-            echo "::error::GPG_PRIVATE_KEY secret is not set. See README.md, 'Releasing', for the secrets required to publish a release."
+            echo "::error::GPG_PRIVATE_KEY secret is not set. See RELEASING.md for the secrets required to publish a release."
             exit 1
           fi
           echo "$GPG_PRIVATE_KEY" | gpg --batch --import

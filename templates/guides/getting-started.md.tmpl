@@ -1,0 +1,44 @@
+---
+page_title: "Getting Started with the WSL Provider"
+subcategory: ""
+description: |-
+  A first walkthrough: install a WSL distribution with Terraform.
+---
+
+# Getting Started with the WSL Provider
+
+This walks through installing a single WSL distribution with Terraform,
+using the Microsoft Store install mode (no rootfs tar needed).
+
+## 1. Configure the provider
+
+{{tffile "examples/provider/provider.tf"}}
+
+## 2. Declare a distribution
+
+{{tffile "examples/resources/wsl_distribution/resource.tf"}}
+
+`distribution` values come from WSL's own catalog (`wsl --list --online`).
+A bare flavor name like `"Ubuntu"` floats to whatever that flavor's catalog
+entry currently marks as default; a specific name like `"Ubuntu-24.04"`
+pins to that entry.
+
+## 3. Apply
+
+```shell
+terraform init
+terraform apply
+```
+
+This runs `wsl --install Ubuntu-24.04 --no-launch`, so Terraform can
+create the registration without waiting on first-launch setup.
+
+## Next steps
+
+- Bringing your own rootfs tar instead of a Store distribution: see
+  [import mode](../resources/distribution.md#import-mode-bring-your-own-rootfs-tar-or-a-wsl-file)
+  in the `wsl_distribution` resource documentation.
+- Full attribute reference: [`wsl_distribution`](../resources/distribution.md).
+- `terraform destroy`, or changing `name`/`distribution`/`rootfs`/`location`,
+  permanently deletes the distribution's virtual disk; see the resource
+  documentation's destructive-delete note before you apply.

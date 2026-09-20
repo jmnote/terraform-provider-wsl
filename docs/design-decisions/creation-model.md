@@ -88,7 +88,7 @@ leaving it to the host's mutable `wsl --set-default-version` setting.
 - Install mode depends on Microsoft Store/network access at apply time,
   which is outside this provider's control and can make `terraform apply`
   less deterministic than import mode; see the "Known limitations" section
-  of README.md.
+  of docs/index.md.
 - Applying a requested `version` in install mode is two wsl.exe calls, not
   one (`wsl --install` then `wsl --set-version`), so `Create` can fail
   between them: the distribution now exists but not at the requested
