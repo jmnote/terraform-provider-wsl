@@ -53,6 +53,30 @@ Running Terraform inside WSL and calling out to
 
 {{ .SchemaMarkdown | trimspace }}
 
+## Resources
+
+- [`wsl_distribution`](resources/distribution.md) (resource): install/import,
+  observe, update, and delete a WSL distribution's registration.
+- [`wsl_distribution`](data-sources/distribution.md) (data source): look up
+  an existing WSL distribution.
+
+## Known limitations
+
+- **WSL list command fallback.** Some WSL versions return non-zero from
+  `wsl --list --verbose` when no distributions are registered. The provider
+  confirms that case with `wsl --list --quiet` and only treats it as an
+  empty registry when quiet listing succeeds with no names. Other failures
+  remain errors so refresh cannot silently remove resources from state. See
+  [microsoft/WSL#6235](https://github.com/microsoft/WSL/issues/6235).
+- **No machine-readable WSL CLI output.** All state reconciliation is
+  parsed from `wsl --list --verbose`'s human-oriented table; see
+  [design-decisions/locale-independent-parsing.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design-decisions/locale-independent-parsing.md)
+  for how that parsing stays locale-independent.
+- **Install mode needs Microsoft Store/network access** at apply time,
+  which is outside this provider's control and can make `terraform apply`
+  less deterministic than import mode; see
+  [design-decisions/creation-model.md](https://github.com/jmnote/terraform-provider-wsl/blob/main/docs/design-decisions/creation-model.md).
+
 ## Destructive operation warning
 
 `terraform destroy`, and any change to `wsl_distribution`'s `name`,
