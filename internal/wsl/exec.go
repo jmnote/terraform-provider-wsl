@@ -50,6 +50,10 @@ func NewProcessRunner(executable string) *ProcessRunner {
 // give a diagnostic pointing at WSL setup rather than a raw OS error.
 var ErrExecutableNotFound = errors.New("wsl: executable not found")
 
+// progressScanWindow bounds how much of a still-running command's captured
+// output logProgress re-decodes and re-scans per write; see its use in Run.
+const progressScanWindow = 4096
+
 func (r *ProcessRunner) Run(ctx context.Context, args ...string) (Result, error) {
 	cmd := exec.CommandContext(ctx, r.Executable, args...)
 
@@ -67,10 +71,24 @@ func (r *ProcessRunner) Run(ctx context.Context, args ...string) (Result, error)
 	logProgress := func(buf *bytes.Buffer) {
 		progressMu.Lock()
 		defer progressMu.Unlock()
+		// Only re-decode/re-scan a bounded trailing window of the buffer,
+		// not everything accumulated so far: a real install can emit
+		// thousands of small progress-bar rewrites, and wsl.exe's
+		// progress/status lines are always far shorter than
+		// progressScanWindow, so the line this is looking for is always
+		// well within it. Without this bound, each write would cost
+		// O(current buffer size), making the whole command O(n^2).
+		b := buf.Bytes()
+		if start := len(b) - progressScanWindow; start > 0 {
+			// Round down to an even offset: UTF-16LE (the encoding
+			// decodeOutput may detect) uses 2-byte code units, so any even
+			// byte offset is guaranteed to fall on a code-unit boundary.
+			b = b[start-start%2:]
+		}
 		// decodeOutput is safe to call on a still-growing (and therefore
 		// possibly mid-character) buffer: it already has to tolerate a
 		// truncated tail for the context-cancellation case below.
-		line := lastVisibleLine(decodeOutput(buf.Bytes()))
+		line := lastVisibleLine(decodeOutput(b))
 		if line == "" || line == lastLogged {
 			return
 		}

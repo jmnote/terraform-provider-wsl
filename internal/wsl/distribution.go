@@ -33,10 +33,10 @@ type Distribution struct {
 //   - Install mode (Distribution set): `wsl --install <Distribution>`, the
 //     same primitive `wsl --install <Distribution>` uses day to day to
 //     fetch a Microsoft Store distribution. No Rootfs/Location needed.
-//     Name is optional: when empty, wsl.exe registers it under
-//     Distribution itself (its own default when `--name` is omitted);
-//     when set to something else, `--name` is passed to register it
-//     under that instead (confirmed working against a real install).
+//     Name is required in both modes (never defaulted from Distribution;
+//     see docs/design/decisions/required-name.md): whenever it differs
+//     from Distribution, `--name` is passed to register it under that
+//     instead (confirmed working against a real install).
 //   - Import mode (Rootfs + Location set): `wsl --import`, bringing your
 //     own root filesystem tar/tar.gz (a `.wsl` file -- a tar archive
 //     Microsoft's own custom-distro tooling produces -- works here too).

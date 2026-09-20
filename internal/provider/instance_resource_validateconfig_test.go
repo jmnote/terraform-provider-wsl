@@ -60,13 +60,19 @@ func TestInstanceResource_ValidateConfig(t *testing.T) {
 		wantError                               bool
 	}{
 		{
-			// ValidateConfig itself has no name-presence check: name is
-			// Required in the schema, so Terraform Core rejects a missing
-			// one before ValidateConfig ever runs in real usage. This case
-			// only confirms mode validation does not also demand a name.
-			name:         "install mode, name omitted: mode validation alone does not error",
+			// Required in the schema only rejects a missing name; it does
+			// not reject an explicitly null or empty one (both of which a
+			// unit test can still construct by bypassing Terraform Core),
+			// so ValidateConfig has its own check for that.
+			name:         "install mode, name omitted: caught explicitly",
 			distribution: "Ubuntu-24.04",
-			wantError:    false,
+			wantError:    true,
+		},
+		{
+			name:         "install mode, name empty string: caught explicitly",
+			cfgName:      "",
+			distribution: "Ubuntu-24.04",
+			wantError:    true,
 		},
 		{
 			name:         "install mode, custom name: valid",
@@ -103,6 +109,7 @@ func TestInstanceResource_ValidateConfig(t *testing.T) {
 			// another resource's computed output) must not be treated as
 			// "absent" and trigger a false "missing creation mode" error.
 			name:         "unknown distribution defers validation",
+			cfgName:      "worker",
 			distribution: unknownValue,
 			wantError:    false,
 		},

@@ -151,17 +151,25 @@ func (r *instanceResource) Configure(_ context.Context, req resource.ConfigureRe
 }
 
 // ValidateConfig catches an invalid creation-mode combination (both modes,
-// neither mode, or an incomplete import-mode pair) at `terraform
-// plan`/`validate` time, rather than only surfacing it as an apply-time
-// error from the wsl.Client (which still enforces the mode-exclusivity rule
-// as a backstop; see internal/wsl/client.go). name itself needs no check
-// here: it is Required in the schema, so Terraform Core rejects a missing
-// one before ValidateConfig ever runs.
+// neither mode, or an incomplete import-mode pair), and an explicitly
+// empty `name`, at `terraform plan`/`validate` time, rather than only
+// surfacing it as an apply-time error from the wsl.Client (which still
+// enforces both as a backstop; see internal/wsl/client.go). `Required` in
+// the schema only rejects a missing `name`; it does not reject `name = ""`,
+// which is why that still needs an explicit check here.
 func (r *instanceResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var config instanceResourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	if !config.Name.IsUnknown() && !isKnownNonEmpty(config.Name) {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("name"),
+			"Missing required value",
+			"name must not be empty.",
+		)
 	}
 
 	// Validate every condition whose inputs are known. An Unknown `name`
@@ -189,7 +197,6 @@ func (r *instanceResource) ValidateConfig(ctx context.Context, req resource.Vali
 			"either distribution (install mode) or rootfs+location (import mode) must be set.",
 		)
 	}
-
 }
 
 func isKnownNonEmpty(v types.String) bool {

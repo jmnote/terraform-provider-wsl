@@ -1,13 +1,13 @@
 ---
 page_title: "wsl Provider"
 description: |-
-  A Terraform provider for declaratively managing Windows Subsystem for Linux distributions.
+  A Terraform provider for declaratively managing Windows Subsystem for Linux instances.
 ---
 
 # wsl Provider
 
 A Terraform provider for declaratively managing Windows Subsystem for Linux
-(WSL) distributions.
+(WSL) instances.
 
 This provider manages the **lifecycle of a WSL instance's
 registration** on a Windows host -- creating it either by installing a

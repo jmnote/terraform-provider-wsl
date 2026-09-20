@@ -64,6 +64,13 @@ func NewClient(runner Runner) Client {
 	return &client{runner: runner}
 }
 
+// run logs args at Debug before invoking the runner, so every wsl.exe
+// invocation this package makes is logged the same way in one place.
+func (c *client) run(ctx context.Context, args ...string) (Result, error) {
+	tflog.Debug(ctx, "wsl: running wsl.exe", map[string]interface{}{"args": args})
+	return c.runner.Run(ctx, args...)
+}
+
 func (c *client) List(ctx context.Context) ([]Distribution, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -160,8 +167,7 @@ func (c *client) createInstall(ctx context.Context, opts CreateOptions) error {
 	}
 	args = append(args, "--no-launch")
 
-	tflog.Debug(ctx, "wsl: running wsl.exe", map[string]interface{}{"args": args})
-	result, err := c.runner.Run(ctx, args...)
+	result, err := c.run(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("wsl: install %q: %w %s", opts.Distribution, err, describeOutput(result))
 	}
@@ -211,8 +217,7 @@ func (c *client) createImport(ctx context.Context, opts CreateOptions) error {
 		args = append(args, "--version", strconv.Itoa(opts.Version))
 	}
 
-	tflog.Debug(ctx, "wsl: running wsl.exe", map[string]interface{}{"args": args})
-	result, err := c.runner.Run(ctx, args...)
+	result, err := c.run(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("wsl: import %q: %w %s", opts.Name, err, describeOutput(result))
 	}
@@ -232,9 +237,7 @@ func (c *client) setVersion(ctx context.Context, name string, version int) error
 		return fmt.Errorf("wsl: set-version: version must be 1 or 2, got %d", version)
 	}
 
-	args := []string{"--set-version", name, strconv.Itoa(version)}
-	tflog.Debug(ctx, "wsl: running wsl.exe", map[string]interface{}{"args": args})
-	result, err := c.runner.Run(ctx, args...)
+	result, err := c.run(ctx, "--set-version", name, strconv.Itoa(version))
 	if err != nil {
 		return fmt.Errorf("wsl: set-version %q to %d: %w %s", name, version, err, describeOutput(result))
 	}
@@ -262,9 +265,7 @@ func (c *client) Delete(ctx context.Context, name string) error {
 // unregister runs `wsl --unregister name` without locking c.mu, for use by
 // callers (Delete, createInstall's rollback) that already hold it.
 func (c *client) unregister(ctx context.Context, name string) error {
-	args := []string{"--unregister", name}
-	tflog.Debug(ctx, "wsl: running wsl.exe", map[string]interface{}{"args": args})
-	result, err := c.runner.Run(ctx, args...)
+	result, err := c.run(ctx, "--unregister", name)
 	if err != nil {
 		return fmt.Errorf("wsl: unregister %q: %w %s", name, err, describeOutput(result))
 	}

@@ -278,7 +278,8 @@ func TestClient_Create_ValidatesRequiredFields(t *testing.T) {
 	c := NewClient(&fakeRunner{})
 
 	cases := []CreateOptions{
-		{Rootfs: "r.tar", Location: `C:\loc`}, // missing name
+		{Rootfs: "r.tar", Location: `C:\loc`}, // missing name (import mode)
+		{Distribution: "Ubuntu"},              // missing name (install mode)
 		{Name: "n", Location: `C:\loc`},       // missing rootfs
 		{Name: "n", Rootfs: "r.tar"},          // missing location
 		{Name: "n"},                           // neither mode set

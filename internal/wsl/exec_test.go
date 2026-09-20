@@ -28,6 +28,27 @@ func TestProcessRunner_Stdout(t *testing.T) {
 	}
 }
 
+// TestProcessRunner_Stdout_LargerThanProgressScanWindow guards against a
+// regression in the progress-logging path: logProgress only re-scans a
+// bounded trailing window of the buffer (see progressScanWindow in exec.go)
+// so a long-running command's many small writes don't cost O(n^2) overall,
+// but Result.Stdout itself must still capture everything, unwindowed.
+func TestProcessRunner_Stdout_LargerThanProgressScanWindow(t *testing.T) {
+	r := NewProcessRunner("cmd.exe")
+	// Each iteration prints "line\r\n" (6 bytes); comfortably more
+	// iterations than needed to exceed progressScanWindow.
+	result, err := r.Run(context.Background(), "/c", "for", "/L", "%i", "in", "(1,1,1000)", "do", "@echo", "line")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Stdout) <= progressScanWindow {
+		t.Fatalf("stdout length = %d, want it to exceed progressScanWindow (%d) for this test to be meaningful", len(result.Stdout), progressScanWindow)
+	}
+	if got := strings.Count(string(result.Stdout), "line"); got != 1000 {
+		t.Errorf("got %d occurrences of %q in stdout, want 1000 -- output looks truncated", got, "line")
+	}
+}
+
 func TestProcessRunner_ExitCodeAndStderr(t *testing.T) {
 	r := NewProcessRunner("cmd.exe")
 	result, err := r.Run(context.Background(), "/c", "echo failure 1>&2 & exit 3")
